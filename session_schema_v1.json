@@ -1,0 +1,215 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "XRL Session Schema v1",
+  "description": "Single source of truth for XRL technology evaluation sessions",
+  "type": "object",
+  "required": [
+    "version",
+    "session_id",
+    "created_at",
+    "updated_at",
+    "status",
+    "raw_input",
+    "onboarding_answers",
+    "classification",
+    "artifacts",
+    "logs"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "v1",
+      "description": "Schema version identifier"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Unique identifier for this session",
+      "minLength": 0
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of session creation",
+      "minLength": 0
+    },
+    "updated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of last update",
+      "minLength": 0
+    },
+    "status": {
+      "type": "string",
+      "description": "Current stage of the session pipeline",
+      "default": "initialized"
+    },
+    "raw_input": {
+      "type": "object",
+      "description": "Initial raw input from the user",
+      "required": [
+        "initial_description",
+        "source"
+      ],
+      "properties": {
+        "initial_description": {
+          "type": "string",
+          "description": "Free-text description of the technology provided by the user",
+          "minLength": 0
+        },
+        "source": {
+          "type": "string",
+          "description": "Source of the input (e.g., 'web', 'api', 'manual')",
+          "default": "web"
+        }
+      },
+      "additionalProperties": false
+    },
+    "onboarding_answers": {
+      "type": "object",
+      "description": "Structured onboarding questions and answers",
+      "required": [
+        "scientific_basis",
+        "primary_applications",
+        "secondary_applications",
+        "exclusions",
+        "example_entities",
+        "deployment_layer",
+        "strategic_focus"
+      ],
+      "properties": {
+        "scientific_basis": {
+          "type": "string",
+          "description": "Scientific basis of the technology",
+          "minLength": 0
+        },
+        "primary_applications": {
+          "type": "string",
+          "description": "Primary applications of the technology",
+          "minLength": 0
+        },
+        "secondary_applications": {
+          "type": "string",
+          "description": "Secondary applications of the technology",
+          "minLength": 0
+        },
+        "exclusions": {
+          "type": "string",
+          "description": "What should be excluded from evaluation",
+          "minLength": 0
+        },
+        "example_entities": {
+          "type": "array",
+          "description": "Example entities or organizations related to this technology",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deployment_layer": {
+          "type": "string",
+          "description": "Deployment layer classification",
+          "minLength": 0
+        },
+        "strategic_focus": {
+          "type": "array",
+          "description": "Strategic focus areas",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "classification": {
+      "type": "object",
+      "description": "Taxonomy classification results",
+      "required": [
+        "taxonomy_candidates",
+        "selected"
+      ],
+      "properties": {
+        "taxonomy_candidates": {
+          "type": "array",
+          "description": "Candidate taxonomy classifications",
+          "items": {
+            "type": "object"
+          }
+        },
+        "selected": {
+          "type": "object",
+          "description": "Selected taxonomy classification",
+          "required": [
+            "l1",
+            "l2",
+            "l3",
+            "node_id"
+          ],
+          "properties": {
+            "l1": {
+              "type": ["string", "null"],
+              "description": "Level 1 classification"
+            },
+            "l2": {
+              "type": ["string", "null"],
+              "description": "Level 2 classification"
+            },
+            "l3": {
+              "type": ["string", "null"],
+              "description": "Level 3 classification"
+            },
+            "node_id": {
+              "type": ["string", "null"],
+              "description": "Taxonomy node identifier"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Generated artifacts from processing stages",
+      "required": [
+        "mapping_profile",
+        "weights",
+        "datasets",
+        "metrics",
+        "scores"
+      ],
+      "properties": {
+        "mapping_profile": {
+          "type": ["object", "null"],
+          "description": "Mapping profile for data extraction"
+        },
+        "weights": {
+          "type": ["object", "null"],
+          "description": "Weighting configuration for scoring"
+        },
+        "datasets": {
+          "type": "object",
+          "description": "Extracted datasets",
+          "additionalProperties": true
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Calculated metrics",
+          "additionalProperties": true
+        },
+        "scores": {
+          "type": "object",
+          "description": "Final scores",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "logs": {
+      "type": "array",
+      "description": "Audit trail of all actions performed on this session",
+      "items": {
+        "type": "object",
+        "description": "Log entry",
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

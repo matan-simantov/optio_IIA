@@ -1,0 +1,260 @@
+/**
+ * Main chat component
+ * Handles message display, input, and webhook integration
+ */
+
+import { useState, useEffect, useRef } from "react";
+import type { Message, ConnectionStatus } from "../types";
+import { MessageBubble } from "./MessageBubble";
+import { callWebhook } from "../lib/api";
+import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
+
+export function Chat() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
+  const [isSending, setIsSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load chat history from localStorage on mount
+  useEffect(() => {
+    const history = loadChatHistory();
+    if (history.length > 0) {
+      setMessages(history);
+    }
+  }, []);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Generate unique ID for messages
+  const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Format status message from webhook response
+  const formatStatusMessage = (response: any): string => {
+    const sessionId = response.session_id || "N/A";
+    const vukId = response.vuk_id || "N/A";
+    const status = response.status || "unknown";
+    const responseMessage = response.message || "";
+
+    if (status === "error" || responseMessage.toLowerCase().includes("error")) {
+      return `❌ Run failed. Reason: ${responseMessage || "Unknown error"}`;
+    }
+
+    if (status === "partial" || responseMessage.toLowerCase().includes("partial")) {
+      return `⚠️ Run partially completed. Session: ${sessionId}${vukId !== "N/A" ? ` VUK: ${vukId}` : ""}. ${responseMessage || ""}`;
+    }
+
+    return `✅ Run completed. Session: ${sessionId}${vukId !== "N/A" ? ` VUK: ${vukId}` : ""}. Data saved.`;
+  };
+
+  // Handle sending a message
+  const handleSend = async () => {
+    if (!input.trim() || isSending) return;
+
+    const userMessage: Message = {
+      id: generateId(),
+      role: "user",
+      content: input.trim(),
+      createdAt: new Date().toISOString(),
+      status: "sending",
+    };
+
+    // Add user message immediately
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    saveChatHistory(updatedMessages);
+    setInput("");
+    setIsSending(true);
+    setConnectionStatus("sending");
+
+    // Create thinking message (temporary)
+    const thinkingId = generateId();
+    const thinkingMessage: Message = {
+      id: thinkingId,
+      role: "assistant",
+      content: "",
+      createdAt: new Date().toISOString(),
+      status: "sending",
+    };
+
+    setMessages([...updatedMessages, thinkingMessage]);
+
+    try {
+      // Call webhook
+      const { response, debug } = await callWebhook(userMessage.content);
+
+      // Update user message status
+      const userMessageUpdated: Message = {
+        ...userMessage,
+        status: response.status === "error" ? "error" : "success",
+      };
+
+      // Create final assistant message
+      const assistantMessage: Message = {
+        id: thinkingId,
+        role: "assistant",
+        content: formatStatusMessage(response),
+        createdAt: new Date().toISOString(),
+        debug: {
+          rawResponse: debug.rawResponse,
+          duration: debug.duration,
+          httpStatus: debug.httpStatus,
+          error: debug.error,
+        },
+      };
+
+      // Replace thinking message with final message and update user message
+      const finalMessages = updatedMessages
+        .map((m) => (m.id === userMessage.id ? userMessageUpdated : m))
+        .map((m) => (m.id === thinkingId ? assistantMessage : m));
+
+      setMessages(finalMessages);
+      saveChatHistory(finalMessages);
+      setConnectionStatus(response.status === "error" ? "failed" : "success");
+    } catch (error) {
+      // Handle unexpected errors
+      const errorMessage: Message = {
+        id: thinkingId,
+        role: "assistant",
+        content: `❌ Run failed. Reason: ${error instanceof Error ? error.message : "Unknown error"}`,
+        createdAt: new Date().toISOString(),
+        debug: {
+          rawResponse: {},
+          duration: 0,
+          error: String(error),
+        },
+      };
+
+      const userMessageUpdated: Message = {
+        ...userMessage,
+        status: "error",
+      };
+
+      const finalMessages = updatedMessages
+        .map((m) => (m.id === userMessage.id ? userMessageUpdated : m))
+        .map((m) => (m.id === thinkingId ? errorMessage : m));
+
+      setMessages(finalMessages);
+      saveChatHistory(finalMessages);
+      setConnectionStatus("failed");
+    } finally {
+      setIsSending(false);
+      // Reset connection status after a delay
+      setTimeout(() => {
+        if (connectionStatus !== "idle") {
+          setConnectionStatus("idle");
+        }
+      }, 3000);
+    }
+  };
+
+  // Handle Enter key (Shift+Enter for newline, Enter to send)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  // Handle clear chat
+  const handleClearChat = () => {
+    if (confirm("Are you sure you want to clear the chat history?")) {
+      setMessages([]);
+      clearChatHistory();
+      setConnectionStatus("idle");
+    }
+  };
+
+  // Connection status badge styling
+  const getStatusBadgeClass = (status: ConnectionStatus): string => {
+    switch (status) {
+      case "idle":
+        return "bg-gray-200 text-gray-700";
+      case "sending":
+        return "bg-yellow-200 text-yellow-800";
+      case "success":
+        return "bg-green-200 text-green-800";
+      case "failed":
+        return "bg-red-200 text-red-800";
+      default:
+        return "bg-gray-200 text-gray-700";
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
+        <h1 className="text-xl font-semibold text-gray-800">optio</h1>
+        <div className="flex items-center gap-3">
+          <div
+            className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusBadgeClass(
+              connectionStatus
+            )}`}
+          >
+            {connectionStatus.toUpperCase()}
+          </div>
+          <button
+            onClick={handleClearChat}
+            className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+          >
+            Clear Chat
+          </button>
+        </div>
+      </div>
+
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+        {messages.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-gray-400">
+            <p>Start a conversation by typing a message below.</p>
+          </div>
+        ) : (
+          <>
+            {messages.map((message) => (
+              <MessageBubble key={message.id} message={message} />
+            ))}
+            <div ref={messagesEndRef} />
+          </>
+        )}
+      </div>
+
+      {/* Input area */}
+      <div className="p-4 border-t border-gray-200 bg-white">
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type your message... (Shift+Enter for newline)"
+            disabled={isSending}
+            rows={1}
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            style={{
+              minHeight: "44px",
+              maxHeight: "120px",
+            }}
+            onInput={(e) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = "auto";
+              target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
+            }}
+          />
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isSending}
+            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
