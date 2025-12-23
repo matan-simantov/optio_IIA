@@ -6,7 +6,8 @@
 import { useState, useEffect, useRef } from "react";
 import type { Message, ConnectionStatus } from "../types";
 import { MessageBubble } from "./MessageBubble";
-import { callWebhook } from "../lib/api";
+import { ResponseModal } from "./ResponseModal";
+import { callWebhook, checkWebhookStatus } from "../lib/api";
 import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
 
 export function Chat() {
@@ -14,8 +15,14 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
   const [isSending, setIsSending] = useState(false);
+  const [lastResponse, setLastResponse] = useState<unknown>(null); // Store last n8n response
+  const [allResponses, setAllResponses] = useState<unknown[]>([]); // Store all responses received
+  const [isModalOpen, setIsModalOpen] = useState(false); // Control modal visibility
+  const [isPolling, setIsPolling] = useState(false); // Track if polling is active
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pollingIntervalRef = useRef<number | null>(null);
+  const pollingTimeoutRef = useRef<number | null>(null);
 
   // Load chat history from localStorage on mount
   useEffect(() => {
@@ -87,6 +94,10 @@ export function Chat() {
       // Call webhook
       const { response, debug } = await callWebhook(userMessage.content);
 
+      // Store the raw response for the response panel
+      setLastResponse(response);
+      setAllResponses([response]); // Initialize with first response
+
       // Update user message status
       const userMessageUpdated: Message = {
         ...userMessage,
@@ -115,7 +126,15 @@ export function Chat() {
       setMessages(finalMessages);
       saveChatHistory(finalMessages);
       setConnectionStatus(response.status === "error" ? "failed" : "success");
+
+      // Start polling if we got a session_id
+      if (response.session_id && response.status !== "error") {
+        startPolling(response.session_id);
+      }
     } catch (error) {
+      // Store error response for the response panel
+      setLastResponse({ error: String(error), status: "error" });
+
       // Handle unexpected errors
       const errorMessage: Message = {
         id: thinkingId,
@@ -160,12 +179,90 @@ export function Chat() {
     }
   };
 
+  // Start polling for updates from n8n
+  const startPolling = (sessionId: string) => {
+    // Stop any existing polling
+    stopPolling();
+
+    setIsPolling(true);
+    const startTime = Date.now();
+    const POLLING_INTERVAL = 3000; // 3 seconds
+    const POLLING_DURATION = 30000; // 30 seconds
+    
+    // Store last response string for comparison
+    const lastResponseRef = { value: JSON.stringify(allResponses[allResponses.length - 1] || {}) };
+
+    // Poll every 3 seconds
+    pollingIntervalRef.current = window.setInterval(async () => {
+      try {
+        const { response } = await checkWebhookStatus(sessionId);
+
+        // Check if this is a new/different response
+        const currentResponseString = JSON.stringify(response);
+        const isNewResponse = currentResponseString !== lastResponseRef.value;
+
+        if (isNewResponse) {
+          // Add new response to the list
+          setAllResponses((prev) => {
+            const updated = [...prev, response];
+            lastResponseRef.value = currentResponseString;
+            return updated;
+          });
+          setLastResponse(response); // Update last response
+        }
+      } catch (error) {
+        console.error("Polling error:", error);
+      }
+
+      // Stop polling after 30 seconds
+      if (Date.now() - startTime >= POLLING_DURATION) {
+        stopPolling();
+      }
+    }, POLLING_INTERVAL);
+
+    // Set timeout to stop polling after 30 seconds
+    pollingTimeoutRef.current = window.setTimeout(() => {
+      stopPolling();
+    }, POLLING_DURATION);
+  };
+
+  // Stop polling
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
+    }
+    setIsPolling(false);
+  };
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, []);
+
   // Handle clear chat
   const handleClearChat = () => {
     if (confirm("Are you sure you want to clear the chat history?")) {
+      stopPolling(); // Stop any active polling
       setMessages([]);
       clearChatHistory();
       setConnectionStatus("idle");
+      setLastResponse(null); // Clear response
+      setAllResponses([]); // Clear all responses
+      setIsModalOpen(false); // Close modal if open
+    }
+  };
+
+  // Handle opening response modal
+  const handleOpenResponseModal = () => {
+    if (lastResponse) {
+      setIsModalOpen(true);
     }
   };
 
@@ -189,7 +286,7 @@ export function Chat() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
-        <h1 className="text-xl font-semibold text-gray-800">optio</h1>
+        <h1 className="text-xl font-semibold text-gray-800">Optio</h1>
         <div className="flex items-center gap-3">
           <div
             className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusBadgeClass(
@@ -253,7 +350,46 @@ export function Chat() {
             Send
           </button>
         </div>
+
+        {/* Response button - appears after successful send */}
+        {lastResponse && (
+          <div className="mt-3 flex justify-center">
+            <button
+              onClick={handleOpenResponseModal}
+              className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                />
+              </svg>
+              View n8n Response
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Response Modal - shows all n8n responses in a modal */}
+      <ResponseModal
+        responses={allResponses}
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        isPolling={isPolling}
+      />
     </div>
   );
 }
