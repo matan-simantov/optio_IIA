@@ -39,8 +39,9 @@ export function Chat() {
   // Generate unique ID for messages
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-  // Format assistant message from n8n response
+  // Format assistant message from backend/n8n response
   // Handles both formats: root-level fields or nested llm object
+  // Priority: response.llm.confirmation_question > stringify response.llm
   const formatN8nResponseMessage = (item: N8nResponseItem): string => {
     // Check if llm data is nested in llm object
     if (item.llm?.confirmation_question) {
@@ -55,6 +56,11 @@ export function Chat() {
       const confidence = item.confidence || 0;
       const confidencePercent = Math.round(confidence * 100);
       return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${item.confirmation_question}`;
+    }
+    
+    // If we have llm object but no confirmation_question, stringify the llm object
+    if (item.llm) {
+      return JSON.stringify(item.llm, null, 2);
     }
     
     // Fallback to llm_raw if available
@@ -99,8 +105,9 @@ export function Chat() {
     setMessages([...updatedMessages, thinkingMessage]);
 
     try {
-      // Call n8n webhook
-      const item = await callN8nWebhook(userMessage.content);
+      // Call backend API (which proxies to n8n)
+      // Pass session_id if we have it in state
+      const item = await callN8nWebhook(userMessage.content, _sessionId);
 
       // Store session_id and vuk_id in state for later use (if present)
       if (item.session_id) {
