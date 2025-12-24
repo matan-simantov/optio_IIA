@@ -5,17 +5,29 @@
 
 /**
  * Response item structure from n8n webhook
+ * The response can be in two formats:
+ * 1. Direct format with llm fields at root level
+ * 2. Nested format with session_id, vuk_id, and llm object
  */
 export interface N8nResponseItem {
-  session_id: string;
-  vuk_id: string;
-  llm: {
+  // Optional fields (may not be present in all responses)
+  session_id?: string;
+  vuk_id?: string;
+  llm_raw?: string;
+  
+  // LLM fields (can be at root level or nested in llm object)
+  technology_guess?: string;
+  confidence?: number;
+  why?: string;
+  confirmation_question?: string;
+  
+  // Nested llm object (alternative format)
+  llm?: {
     technology_guess: string;
     confidence: number;
     why: string;
     confirmation_question: string;
   };
-  llm_raw: string;
 }
 
 /**
@@ -118,20 +130,28 @@ export async function callN8nWebhook(userText: string): Promise<N8nResponseItem>
     item = rawResponse as N8nResponseItem;
   }
 
-  // Validate that required fields are present
-  // Log validation issues in dev mode for debugging
-  if (import.meta.env.DEV) {
-    if (!item.session_id) console.warn("[DEV] Missing session_id in response");
-    if (!item.vuk_id) console.warn("[DEV] Missing vuk_id in response");
-    if (!item.llm) console.warn("[DEV] Missing llm in response");
+  // Normalize the response structure
+  // If llm fields are at root level, we need to check if we have the required fields
+  // If llm is nested, use the nested structure
+  
+  // Check if we have llm data (either at root or nested)
+  const hasLlmAtRoot = item.technology_guess !== undefined || item.confirmation_question !== undefined;
+  const hasLlmNested = item.llm !== undefined && item.llm.confirmation_question !== undefined;
+
+  // Validate that we have at least some LLM data
+  if (!hasLlmAtRoot && !hasLlmNested) {
+    if (import.meta.env.DEV) {
+      console.warn("[DEV] Response structure:", item);
+    }
+    throw new Error(`Webhook response missing LLM data. Expected either root-level fields (technology_guess, confirmation_question) or nested llm object. Full response: ${JSON.stringify(item)}`);
   }
 
-  if (!item.session_id || !item.vuk_id || !item.llm) {
-    const missingFields = [];
-    if (!item.session_id) missingFields.push("session_id");
-    if (!item.vuk_id) missingFields.push("vuk_id");
-    if (!item.llm) missingFields.push("llm");
-    throw new Error(`Webhook response missing required fields: ${missingFields.join(", ")}. Full response: ${JSON.stringify(item)}`);
+  // Dev-only: Log validation info
+  if (import.meta.env.DEV) {
+    if (item.session_id) console.log("[DEV] session_id:", item.session_id);
+    if (item.vuk_id) console.log("[DEV] vuk_id:", item.vuk_id);
+    if (hasLlmAtRoot) console.log("[DEV] LLM data at root level");
+    if (hasLlmNested) console.log("[DEV] LLM data nested in llm object");
   }
 
   return item;

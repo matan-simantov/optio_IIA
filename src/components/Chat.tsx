@@ -40,17 +40,28 @@ export function Chat() {
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   // Format assistant message from n8n response
-  // Shows confirmation_question if present, otherwise falls back to llm_raw or raw response
+  // Handles both formats: root-level fields or nested llm object
   const formatN8nResponseMessage = (item: N8nResponseItem): string => {
+    // Check if llm data is nested in llm object
     if (item.llm?.confirmation_question) {
       const { technology_guess, confidence, confirmation_question } = item.llm;
-      const confidencePercent = Math.round(confidence * 100);
+      const confidencePercent = Math.round((confidence || 0) * 100);
       return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${confirmation_question}`;
     }
-    // Fallback to llm_raw if confirmation_question is not available
+    
+    // Check if llm data is at root level
+    if (item.confirmation_question) {
+      const technology_guess = item.technology_guess || "Unknown";
+      const confidence = item.confidence || 0;
+      const confidencePercent = Math.round(confidence * 100);
+      return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${item.confirmation_question}`;
+    }
+    
+    // Fallback to llm_raw if available
     if (item.llm_raw) {
       return item.llm_raw;
     }
+    
     // Last resort: show raw response as JSON
     return JSON.stringify(item, null, 2);
   };
@@ -91,9 +102,13 @@ export function Chat() {
       // Call n8n webhook
       const item = await callN8nWebhook(userMessage.content);
 
-      // Store session_id and vuk_id in state for later use
-      setSessionId(item.session_id);
-      setVukId(item.vuk_id);
+      // Store session_id and vuk_id in state for later use (if present)
+      if (item.session_id) {
+        setSessionId(item.session_id);
+      }
+      if (item.vuk_id) {
+        setVukId(item.vuk_id);
+      }
 
       // Store the raw response for the response panel
       setAllResponses([item]); // Initialize with first response
