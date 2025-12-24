@@ -64,11 +64,41 @@ export async function callN8nWebhook(userText: string): Promise<N8nResponseItem>
 
   // Check if request was successful
   if (!response.ok) {
-    throw new Error(`Webhook request failed: ${response.status} ${response.statusText}`);
+    // Try to get error message from response body
+    let errorBody = "";
+    try {
+      const text = await response.text();
+      errorBody = text ? ` Response body: ${text}` : "";
+    } catch {
+      // Ignore errors reading error body
+    }
+    throw new Error(`Webhook request failed: ${response.status} ${response.statusText}${errorBody}`);
+  }
+
+  // Get response text first to handle empty responses
+  const responseText = await response.text();
+
+  // Dev-only: Log raw response text
+  if (import.meta.env.DEV) {
+    console.log("[DEV] Raw response text:", responseText);
+  }
+
+  // Check if response is empty
+  if (!responseText || responseText.trim() === "") {
+    throw new Error("Webhook returned empty response");
   }
 
   // Parse JSON response
-  const rawResponse = await response.json();
+  let rawResponse: unknown;
+  try {
+    rawResponse = JSON.parse(responseText);
+  } catch (parseError) {
+    // Log the problematic response for debugging
+    if (import.meta.env.DEV) {
+      console.error("[DEV] Failed to parse JSON response:", responseText);
+    }
+    throw new Error(`Invalid JSON response from webhook: ${parseError instanceof Error ? parseError.message : "Unknown parse error"}. Response: ${responseText.substring(0, 200)}`);
+  }
 
   // Dev-only: Log parsed JSON response
   if (import.meta.env.DEV) {
