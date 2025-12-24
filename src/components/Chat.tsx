@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from "react";
 import type { Message, ConnectionStatus } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ResponseModal } from "./ResponseModal";
-import { callN8nWebhook } from "../lib/n8n";
+import { callN8nWebhook, type N8nResponseItem } from "../lib/n8n";
 import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
 
 export function Chat() {
@@ -40,11 +40,19 @@ export function Chat() {
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   // Format assistant message from n8n response
-  const formatN8nResponseMessage = (item: { llm: { technology_guess: string; confidence: number; confirmation_question: string } }): string => {
-    const { technology_guess, confidence, confirmation_question } = item.llm;
-    const confidencePercent = Math.round(confidence * 100);
-    
-    return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${confirmation_question}`;
+  // Shows confirmation_question if present, otherwise falls back to llm_raw or raw response
+  const formatN8nResponseMessage = (item: N8nResponseItem): string => {
+    if (item.llm?.confirmation_question) {
+      const { technology_guess, confidence, confirmation_question } = item.llm;
+      const confidencePercent = Math.round(confidence * 100);
+      return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${confirmation_question}`;
+    }
+    // Fallback to llm_raw if confirmation_question is not available
+    if (item.llm_raw) {
+      return item.llm_raw;
+    }
+    // Last resort: show raw response as JSON
+    return JSON.stringify(item, null, 2);
   };
 
   // Handle sending a message

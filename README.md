@@ -66,12 +66,14 @@ A local web UI for interacting with the XRL system via n8n webhooks.
    npm install
    ```
 
-2. **Configure webhook URL (optional):**
+2. **Environment Variables:**
+   
    Create a `.env` file in the project root:
+   ```env
+   VITE_API_URL=https://optio-xrl.app.n8n.cloud/webhook/xrl/session/create
    ```
-   VITE_N8N_WEBHOOK_URL=https://your-webhook-url.com/webhook
-   ```
-   If not set, defaults to: `https://optio-xrl.app.n8n.cloud/webhook-test/xrl/session/create`
+   
+   **Required for production:** The `VITE_API_URL` environment variable must be set to the n8n webhook endpoint URL. In Render (static site), set the Environment Variable key as `VITE_API_URL` with the value: `https://optio-xrl.app.n8n.cloud/webhook/xrl/session/create`
 
 3. **Run development server:**
    ```bash

@@ -21,7 +21,7 @@ export interface N8nResponseItem {
 /**
  * Call n8n webhook with user message
  * 
- * The webhook URL is read from VITE_N8N_WEBHOOK_URL environment variable.
+ * The webhook URL is read from VITE_API_URL environment variable.
  * The response can be either an array with one object or a single object.
  * This function normalizes it to a single object.
  * 
@@ -30,11 +30,16 @@ export interface N8nResponseItem {
  * @throws Error if the webhook URL is not configured or request fails
  */
 export async function callN8nWebhook(userText: string): Promise<N8nResponseItem> {
-  // Read webhook URL from environment variable
-  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
+  // Read webhook URL from environment variable (required, no default)
+  const API_URL = import.meta.env.VITE_API_URL;
 
-  if (!webhookUrl) {
-    throw new Error("VITE_N8N_WEBHOOK_URL environment variable is not set");
+  if (!API_URL) {
+    throw new Error("Missing VITE_API_URL environment variable");
+  }
+
+  // Dev-only: Log the resolved webhook URL
+  if (import.meta.env.DEV) {
+    console.log("[DEV] Using webhook URL:", API_URL);
   }
 
   // Prepare the payload as specified
@@ -44,13 +49,18 @@ export async function callN8nWebhook(userText: string): Promise<N8nResponseItem>
   };
 
   // Make POST request to webhook
-  const response = await fetch(webhookUrl, {
+  const response = await fetch(API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
   });
+
+  // Dev-only: Log HTTP status
+  if (import.meta.env.DEV) {
+    console.log("[DEV] HTTP Status:", response.status, response.statusText);
+  }
 
   // Check if request was successful
   if (!response.ok) {
@@ -60,8 +70,10 @@ export async function callN8nWebhook(userText: string): Promise<N8nResponseItem>
   // Parse JSON response
   const rawResponse = await response.json();
 
-  // Log raw response for debugging
-  console.log("n8n webhook raw response:", rawResponse);
+  // Dev-only: Log parsed JSON response
+  if (import.meta.env.DEV) {
+    console.log("[DEV] Parsed JSON response:", rawResponse);
+  }
 
   // Normalize response: handle both array and single object cases
   let item: N8nResponseItem;
