@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from "react";
 import type { Message, ConnectionStatus } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ResponseModal } from "./ResponseModal";
-import { callWebhook, checkWebhookStatus } from "../services/api";
+import { callN8nWebhook } from "../lib/n8n";
 import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
 
 export function Chat() {
@@ -15,14 +15,13 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
   const [isSending, setIsSending] = useState(false);
-  const [lastResponse, setLastResponse] = useState<unknown>(null); // Store last n8n response
   const [allResponses, setAllResponses] = useState<unknown[]>([]); // Store all responses received
   const [isModalOpen, setIsModalOpen] = useState(false); // Control modal visibility
-  const [isPolling, setIsPolling] = useState(false); // Track if polling is active
+  // Store session_id and vuk_id in state for later use (not implemented yet)
+  const [_sessionId, setSessionId] = useState<string | null>(null); // Store session_id from n8n response (for later use)
+  const [_vukId, setVukId] = useState<string | null>(null); // Store vuk_id from n8n response (for later use)
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const pollingIntervalRef = useRef<number | null>(null);
-  const pollingTimeoutRef = useRef<number | null>(null);
 
   // Load chat history from localStorage on mount
   useEffect(() => {
@@ -40,22 +39,12 @@ export function Chat() {
   // Generate unique ID for messages
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-  // Format status message from webhook response
-  const formatStatusMessage = (response: any): string => {
-    const sessionId = response.session_id || "N/A";
-    const vukId = response.vuk_id || "N/A";
-    const status = response.status || "unknown";
-    const responseMessage = response.message || "";
-
-    if (status === "error" || responseMessage.toLowerCase().includes("error")) {
-      return `❌ Run failed. Reason: ${responseMessage || "Unknown error"}`;
-    }
-
-    if (status === "partial" || responseMessage.toLowerCase().includes("partial")) {
-      return `⚠️ Run partially completed. Session: ${sessionId}${vukId !== "N/A" ? ` VUK: ${vukId}` : ""}. ${responseMessage || ""}`;
-    }
-
-    return `✅ Run completed. Session: ${sessionId}${vukId !== "N/A" ? ` VUK: ${vukId}` : ""}. Data saved.`;
+  // Format assistant message from n8n response
+  const formatN8nResponseMessage = (item: { llm: { technology_guess: string; confidence: number; confirmation_question: string } }): string => {
+    const { technology_guess, confidence, confirmation_question } = item.llm;
+    const confidencePercent = Math.round(confidence * 100);
+    
+    return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${confirmation_question}`;
   };
 
   // Handle sending a message
@@ -91,31 +80,28 @@ export function Chat() {
     setMessages([...updatedMessages, thinkingMessage]);
 
     try {
-      // Call webhook
-      const { response, debug } = await callWebhook(userMessage.content);
+      // Call n8n webhook
+      const item = await callN8nWebhook(userMessage.content);
+
+      // Store session_id and vuk_id in state for later use
+      setSessionId(item.session_id);
+      setVukId(item.vuk_id);
 
       // Store the raw response for the response panel
-      setLastResponse(response);
-      setAllResponses([response]); // Initialize with first response
+      setAllResponses([item]); // Initialize with first response
 
       // Update user message status
       const userMessageUpdated: Message = {
         ...userMessage,
-        status: response.status === "error" ? "error" : "success",
+        status: "success",
       };
 
-      // Create final assistant message
+      // Create final assistant message with formatted content
       const assistantMessage: Message = {
         id: thinkingId,
         role: "assistant",
-        content: formatStatusMessage(response),
+        content: formatN8nResponseMessage(item),
         createdAt: new Date().toISOString(),
-        debug: {
-          rawResponse: debug.rawResponse,
-          duration: debug.duration,
-          httpStatus: debug.httpStatus,
-          error: debug.error,
-        },
       };
 
       // Replace thinking message with final message and update user message
@@ -125,16 +111,8 @@ export function Chat() {
 
       setMessages(finalMessages);
       saveChatHistory(finalMessages);
-      setConnectionStatus(response.status === "error" ? "failed" : "success");
-
-      // Start polling if we got a session_id
-      if (response.session_id && response.status !== "error") {
-        startPolling(response.session_id);
-      }
+      setConnectionStatus("success");
     } catch (error) {
-      // Store error response for the response panel
-      setLastResponse({ error: String(error), status: "error" });
-
       // Handle unexpected errors
       const errorMessage: Message = {
         id: thinkingId,
@@ -179,90 +157,17 @@ export function Chat() {
     }
   };
 
-  // Start polling for updates from n8n
-  const startPolling = (sessionId: string) => {
-    // Stop any existing polling
-    stopPolling();
-
-    setIsPolling(true);
-    const startTime = Date.now();
-    const POLLING_INTERVAL = 3000; // 3 seconds
-    const POLLING_DURATION = 30000; // 30 seconds
-    
-    // Store last response string for comparison
-    const lastResponseRef = { value: JSON.stringify(allResponses[allResponses.length - 1] || {}) };
-
-    // Poll every 3 seconds
-    pollingIntervalRef.current = window.setInterval(async () => {
-      try {
-        const { response } = await checkWebhookStatus(sessionId);
-
-        // Check if this is a new/different response
-        const currentResponseString = JSON.stringify(response);
-        const isNewResponse = currentResponseString !== lastResponseRef.value;
-
-        if (isNewResponse) {
-          // Add new response to the list
-          setAllResponses((prev) => {
-            const updated = [...prev, response];
-            lastResponseRef.value = currentResponseString;
-            return updated;
-          });
-          setLastResponse(response); // Update last response
-        }
-      } catch (error) {
-        console.error("Polling error:", error);
-      }
-
-      // Stop polling after 30 seconds
-      if (Date.now() - startTime >= POLLING_DURATION) {
-        stopPolling();
-      }
-    }, POLLING_INTERVAL);
-
-    // Set timeout to stop polling after 30 seconds
-    pollingTimeoutRef.current = window.setTimeout(() => {
-      stopPolling();
-    }, POLLING_DURATION);
-  };
-
-  // Stop polling
-  const stopPolling = () => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current);
-      pollingTimeoutRef.current = null;
-    }
-    setIsPolling(false);
-  };
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      stopPolling();
-    };
-  }, []);
 
   // Handle clear chat
   const handleClearChat = () => {
     if (confirm("Are you sure you want to clear the chat history?")) {
-      stopPolling(); // Stop any active polling
       setMessages([]);
       clearChatHistory();
       setConnectionStatus("idle");
-      setLastResponse(null); // Clear response
       setAllResponses([]); // Clear all responses
+      setSessionId(null); // Clear session_id
+      setVukId(null); // Clear vuk_id
       setIsModalOpen(false); // Close modal if open
-    }
-  };
-
-  // Handle opening response modal
-  const handleOpenResponseModal = () => {
-    if (lastResponse) {
-      setIsModalOpen(true);
     }
   };
 
@@ -350,37 +255,6 @@ export function Chat() {
             Send
           </button>
         </div>
-
-        {/* Response button - appears after successful send */}
-        {lastResponse !== null && (
-          <div className="mt-3 flex justify-center">
-            <button
-              onClick={handleOpenResponseModal}
-              className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                />
-              </svg>
-              View n8n Response
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Response Modal - shows all n8n responses in a modal */}
@@ -388,7 +262,7 @@ export function Chat() {
         responses={allResponses}
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        isPolling={isPolling}
+        isPolling={false}
       />
     </div>
   );
