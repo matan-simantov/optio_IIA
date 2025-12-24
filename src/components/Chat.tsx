@@ -121,6 +121,9 @@ export function Chat() {
       saveChatHistory(finalMessages);
       setConnectionStatus("success");
     } catch (error) {
+      // Log error for debugging
+      console.error("Error calling n8n webhook:", error);
+      
       // Handle unexpected errors
       const errorMessage: Message = {
         id: thinkingId,

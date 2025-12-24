@@ -89,8 +89,19 @@ export async function callN8nWebhook(userText: string): Promise<N8nResponseItem>
   }
 
   // Validate that required fields are present
+  // Log validation issues in dev mode for debugging
+  if (import.meta.env.DEV) {
+    if (!item.session_id) console.warn("[DEV] Missing session_id in response");
+    if (!item.vuk_id) console.warn("[DEV] Missing vuk_id in response");
+    if (!item.llm) console.warn("[DEV] Missing llm in response");
+  }
+
   if (!item.session_id || !item.vuk_id || !item.llm) {
-    throw new Error("Webhook response missing required fields");
+    const missingFields = [];
+    if (!item.session_id) missingFields.push("session_id");
+    if (!item.vuk_id) missingFields.push("vuk_id");
+    if (!item.llm) missingFields.push("llm");
+    throw new Error(`Webhook response missing required fields: ${missingFields.join(", ")}. Full response: ${JSON.stringify(item)}`);
   }
 
   return item;
