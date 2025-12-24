@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from "react";
 import type { Message, ConnectionStatus } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ResponseModal } from "./ResponseModal";
-import { callWebhook, checkWebhookStatus } from "../lib/api";
+import { callWebhook, checkWebhookStatus } from "../services/api";
 import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
 
 export function Chat() {
@@ -352,7 +352,7 @@ export function Chat() {
         </div>
 
         {/* Response button - appears after successful send */}
-        {lastResponse && (
+        {lastResponse !== null && (
           <div className="mt-3 flex justify-center">
             <button
               onClick={handleOpenResponseModal}

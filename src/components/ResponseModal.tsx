@@ -4,7 +4,7 @@
  */
 
 interface ResponseModalProps {
-  responses: unknown[]; // All responses from n8n
+  responses: unknown[] | readonly unknown[]; // All responses from n8n
   isOpen: boolean; // Whether the modal is open
   onClose: () => void; // Callback to close the modal
   isPolling?: boolean; // Whether polling is active

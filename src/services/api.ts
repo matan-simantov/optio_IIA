@@ -3,20 +3,10 @@
  */
 
 import type { WebhookPayload, WebhookResponse, DebugInfo } from "../types";
-
-// Default webhook URL (can be overridden via environment variable)
-const DEFAULT_WEBHOOK_URL = "https://optio-xrl.app.n8n.cloud/webhook/xrl/session/create";
+import { getWebhookUrl, getStatusPollUrl } from "../config/env";
 
 // Request timeout in milliseconds (20 seconds as specified)
 const REQUEST_TIMEOUT = 20000;
-
-/**
- * Get the webhook URL from environment variable or use default
- * @returns Webhook URL string
- */
-function getWebhookUrl(): string {
-  return import.meta.env.VITE_N8N_WEBHOOK_URL || DEFAULT_WEBHOOK_URL;
-}
 
 /**
  * Call the n8n webhook with the user's message
@@ -121,7 +111,7 @@ export async function checkWebhookStatus(
   sessionId: string
 ): Promise<{ response: WebhookResponse; debug: DebugInfo }> {
   const startTime = Date.now();
-  const webhookUrl = getWebhookUrl();
+  const statusPollUrl = getStatusPollUrl();
 
   // Prepare the payload with session_id to check status
   const payload = {
@@ -137,7 +127,7 @@ export async function checkWebhookStatus(
 
   try {
     // Make the POST request
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(statusPollUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
