@@ -4,44 +4,40 @@
  */
 
 /**
- * Response item structure from n8n webhook
- * The response can be in two formats:
- * 1. Direct format with llm fields at root level
- * 2. Nested format with session_id, vuk_id, and llm object
+ * Backend API response structure
+ * The backend normalizes n8n responses and returns a stable format
  */
-export interface N8nResponseItem {
-  // Optional fields (may not be present in all responses)
-  session_id?: string;
-  vuk_id?: string;
-  llm_raw?: string;
-  
-  // LLM fields (can be at root level or nested in llm object)
-  technology_guess?: string;
-  confidence?: number;
-  why?: string;
-  confirmation_question?: string;
-  
-  // Nested llm object (alternative format)
-  llm?: {
-    technology_guess: string;
-    confidence: number;
-    why: string;
-    confirmation_question: string;
-  };
+export interface BackendResponse {
+  ok: boolean;
+  assistant_text: string;
+  assistant_json: {
+    technology_guess?: string;
+    confidence?: number;
+    why?: string;
+    confirmation_question?: string;
+    [key: string]: unknown;
+  } | null;
+  n8n_raw?: unknown;
+  error?: string;
 }
 
 /**
  * Call backend API endpoint for chat
  * 
- * The API URL is read from VITE_API_URL environment variable.
- * This function calls the backend which proxies to n8n.
+ * The API URL is read from VITE_API_URL environment variable (should be https://xrl.onrender.com).
+ * This function calls the backend which proxies to n8n and normalizes the response.
  * 
  * @param userText The user's message text
  * @param sessionId Optional session ID if available in state
- * @returns Promise resolving to the response from backend (which proxies n8n)
+ * @param vukId Optional VUK ID if available in state
+ * @returns Promise resolving to the normalized backend response
  * @throws Error if the API URL is not configured or request fails
  */
-export async function callN8nWebhook(userText: string, sessionId?: string | null): Promise<N8nResponseItem> {
+export async function callN8nWebhook(
+  userText: string,
+  sessionId?: string | null,
+  vukId?: string | null
+): Promise<BackendResponse> {
   // Read API URL from environment variable (required, no default)
   const API_URL = import.meta.env.VITE_API_URL;
 
@@ -52,22 +48,28 @@ export async function callN8nWebhook(userText: string, sessionId?: string | null
   // Construct the backend endpoint URL
   const backendUrl = `${API_URL}/api/chat`;
 
-  // Dev-only: Log the resolved backend URL
+  // Dev-only: Log the resolved backend URL and request details
   if (import.meta.env.DEV) {
-    console.log("[DEV] Calling backend endpoint:", backendUrl);
+    console.log("[DEV] Request URL:", backendUrl);
     if (sessionId) {
       console.log("[DEV] Including session_id:", sessionId);
+    }
+    if (vukId) {
+      console.log("[DEV] Including vuk_id:", vukId);
     }
   }
 
   // Prepare the payload for backend
-  const payload: { message: string; session_id?: string } = {
+  const payload: { message: string; session_id?: string; vuk_id?: string } = {
     message: userText,
   };
   
-  // Include session_id if provided
+  // Include session_id and vuk_id if provided
   if (sessionId) {
     payload.session_id = sessionId;
+  }
+  if (vukId) {
+    payload.vuk_id = vukId;
   }
 
   // Make POST request to backend
@@ -86,90 +88,43 @@ export async function callN8nWebhook(userText: string, sessionId?: string | null
     throw new Error(`Failed to connect to backend: ${fetchError instanceof Error ? fetchError.message : "Unknown error"}`);
   }
 
-    // Dev-only: Log HTTP status
-    if (import.meta.env.DEV) {
-      console.log("[DEV] HTTP Status:", response.status, response.statusText);
-    }
-
-    // Parse JSON response from backend
-    let backendResponse: { ok: boolean; n8n_status?: number; n8n?: unknown; error?: string };
-    try {
-      backendResponse = await response.json();
-    } catch (parseError) {
-      // If JSON parsing fails, try to get text
-      const responseText = await response.text();
-      if (import.meta.env.DEV) {
-        console.error("[DEV] Failed to parse backend JSON response:", responseText);
-      }
-      throw new Error(`Invalid JSON response from backend: ${parseError instanceof Error ? parseError.message : "Unknown parse error"}. Response: ${responseText.substring(0, 200)}`);
-    }
-
-    // Dev-only: Log backend response
-    if (import.meta.env.DEV) {
-      console.log("[DEV] Backend response:", backendResponse);
-      console.log("[DEV] n8n status:", backendResponse.n8n_status);
-      console.log("[DEV] n8n data:", backendResponse.n8n);
-    }
-
-    // Check if request was successful
-    if (!response.ok || !backendResponse.ok) {
-      const errorMessage = backendResponse.error || `Backend request failed: ${response.status} ${response.statusText}`;
-      if (import.meta.env.DEV) {
-        console.error("[DEV] Backend error:", response.status, errorMessage);
-      }
-      throw new Error(errorMessage);
-    }
-
-    // Extract n8n response from backend wrapper
-    // Backend returns: { ok: true, n8n_status: number, n8n: object|{raw: string} }
-    const rawResponse = backendResponse.n8n;
-    
-    if (!rawResponse) {
-      throw new Error("Backend response missing n8n data");
-    }
-
-    // Handle case where n8n returned non-JSON (wrapped as { raw: "<text>" })
-    if (typeof rawResponse === "object" && "raw" in rawResponse && Object.keys(rawResponse).length === 1) {
-      throw new Error(`n8n returned non-JSON response: ${(rawResponse as { raw: string }).raw}`);
-    }
-
-  // Normalize response: handle both array and single object cases
-  let item: N8nResponseItem;
-  if (Array.isArray(rawResponse)) {
-    // If response is an array, take the first item
-    if (rawResponse.length === 0) {
-      throw new Error("Backend returned empty array");
-    }
-    item = rawResponse[0] as N8nResponseItem;
-  } else {
-    // If response is a single object, use it directly
-    item = rawResponse as N8nResponseItem;
-  }
-
-  // Normalize the response structure
-  // If llm fields are at root level, we need to check if we have the required fields
-  // If llm is nested, use the nested structure
-  
-  // Check if we have llm data (either at root or nested)
-  const hasLlmAtRoot = item.technology_guess !== undefined || item.confirmation_question !== undefined;
-  const hasLlmNested = item.llm !== undefined && item.llm.confirmation_question !== undefined;
-
-  // Validate that we have at least some LLM data
-  if (!hasLlmAtRoot && !hasLlmNested) {
-    if (import.meta.env.DEV) {
-      console.warn("[DEV] Response structure:", item);
-    }
-    throw new Error(`Backend response missing LLM data. Expected either root-level fields (technology_guess, confirmation_question) or nested llm object. Full response: ${JSON.stringify(item)}`);
-  }
-
-  // Dev-only: Log validation info
+  // Dev-only: Log HTTP status
   if (import.meta.env.DEV) {
-    if (item.session_id) console.log("[DEV] session_id:", item.session_id);
-    if (item.vuk_id) console.log("[DEV] vuk_id:", item.vuk_id);
-    if (hasLlmAtRoot) console.log("[DEV] LLM data at root level");
-    if (hasLlmNested) console.log("[DEV] LLM data nested in llm object");
+    console.log("[DEV] HTTP Status:", response.status, response.statusText);
   }
 
-  return item;
+  // Parse JSON response from backend
+  let backendResponse: BackendResponse;
+  try {
+    backendResponse = await response.json();
+  } catch (parseError) {
+    // If JSON parsing fails, try to get text for error message
+    const responseText = await response.text();
+    if (import.meta.env.DEV) {
+      console.error("[DEV] Failed to parse backend JSON response:", responseText);
+    }
+    throw new Error(`Invalid JSON response from backend: ${parseError instanceof Error ? parseError.message : "Unknown parse error"}. Response: ${responseText.substring(0, 200)}`);
+  }
+
+  // Dev-only: Log backend response keys (not secrets)
+  if (import.meta.env.DEV) {
+    console.log("[DEV] Backend response keys:", Object.keys(backendResponse));
+    console.log("[DEV] Backend response ok:", backendResponse.ok);
+    if (backendResponse.ok) {
+      console.log("[DEV] Has assistant_text:", !!backendResponse.assistant_text);
+      console.log("[DEV] Has assistant_json:", !!backendResponse.assistant_json);
+    }
+  }
+
+  // Check if request was successful
+  if (!response.ok || !backendResponse.ok) {
+    const errorMessage = backendResponse.error || `Backend request failed: ${response.status} ${response.statusText}`;
+    if (import.meta.env.DEV) {
+      console.error("[DEV] Backend error:", response.status, errorMessage);
+    }
+    throw new Error(errorMessage);
+  }
+
+  return backendResponse;
 }
 

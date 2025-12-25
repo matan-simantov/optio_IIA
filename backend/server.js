@@ -28,6 +28,14 @@ app.use(
 app.use(express.json());
 
 /**
+ * Basic GET / route
+ * Returns simple OK status for sanity checking the service
+ */
+app.get("/", (req, res) => {
+  res.json({ ok: true });
+});
+
+/**
  * Health check endpoint
  * Returns simple OK status for monitoring
  */
@@ -37,10 +45,10 @@ app.get("/health", (req, res) => {
 
 /**
  * Chat API endpoint
- * Proxies requests to n8n webhook
+ * Proxies requests to n8n webhook and normalizes the response for the frontend
  * 
- * Request body: { message: string, session_id?: string|null }
- * Response: { ok: true, n8n_status: number, n8n: object|{raw: string} }
+ * Request body: { message: string, session_id?: string, vuk_id?: string }
+ * Response: { ok: true, n8n_raw: object, assistant_text: string, assistant_json: object|null }
  */
 app.post("/api/chat", async (req, res) => {
   try {
@@ -52,8 +60,8 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    // Extract message and optional session_id from request body
-    const { message, session_id } = req.body;
+    // Extract message and optional session_id/vuk_id from request body
+    const { message, session_id, vuk_id } = req.body;
 
     // Validate that message is provided
     if (!message || typeof message !== "string") {
@@ -75,10 +83,11 @@ app.post("/api/chat", async (req, res) => {
     }
 
     // Prepare payload for n8n webhook
-    // Send only message and session_id (if provided)
+    // Include message and optional session_id/vuk_id if provided
     const n8nPayload = {
       message,
       ...(session_id && { session_id }),
+      ...(vuk_id && { vuk_id }),
     };
 
     // Forward request to n8n webhook
@@ -91,29 +100,91 @@ app.post("/api/chat", async (req, res) => {
     // Read response as text first (to handle non-JSON responses)
     const responseText = await n8nResponse.text();
 
-    // Try to parse as JSON
-    let n8nData;
-    try {
-      n8nData = JSON.parse(responseText);
-    } catch (parseError) {
-      // If parsing fails, wrap as { raw: "<text>" }
-      n8nData = { raw: responseText };
+    // Check if n8n returned a non-2xx status
+    if (!n8nResponse.ok) {
+      // Return 502 Bad Gateway with minimal debug info
+      const textSnippet = responseText.length > 200 ? responseText.substring(0, 200) + "..." : responseText;
+      return res.status(502).json({
+        ok: false,
+        error: `n8n returned ${n8nResponse.status} ${n8nResponse.statusText}`,
+        status: n8nResponse.status,
+        text_snippet: textSnippet,
+      });
     }
 
-    // Return success response with n8n status and data
+    // Try to parse n8n response as JSON
+    let n8nRaw;
+    try {
+      n8nRaw = JSON.parse(responseText);
+    } catch (parseError) {
+      // If parsing fails, return error
+      return res.status(502).json({
+        ok: false,
+        error: "Invalid JSON response from n8n",
+        text_snippet: responseText.substring(0, 200),
+      });
+    }
+
+    // Extract assistant_text from n8n response structure
+    // Expected structure: [{ output: [{ content: [{ type: "output_text", text: "..." }] }] }]
+    let assistantText = "";
+
+    // Check if response is an array and has the expected structure
+    if (Array.isArray(n8nRaw) && n8nRaw.length > 0) {
+      const firstItem = n8nRaw[0];
+      
+      // Check if output exists and is an array
+      if (firstItem.output && Array.isArray(firstItem.output) && firstItem.output.length > 0) {
+        const firstOutput = firstItem.output[0];
+        
+        // Check if content exists and is an array
+        if (firstOutput.content && Array.isArray(firstOutput.content)) {
+          // Find the first content item with type "output_text"
+          const outputTextContent = firstOutput.content.find(
+            (item) => item.type === "output_text" && item.text
+          );
+          
+          if (outputTextContent && outputTextContent.text) {
+            assistantText = outputTextContent.text;
+          }
+        }
+      }
+    }
+
+    // Try to parse assistant_text as JSON if it looks like JSON
+    let assistantJson = null;
+    if (assistantText && (assistantText.trim().startsWith("{") || assistantText.trim().startsWith("["))) {
+      try {
+        assistantJson = JSON.parse(assistantText);
+      } catch (parseError) {
+        // If parsing fails, keep assistantJson as null and assistantText as-is
+        assistantJson = null;
+      }
+    }
+
+    // Return normalized response to frontend
     res.status(200).json({
       ok: true,
-      n8n_status: n8nResponse.status,
-      n8n: n8nData,
+      n8n_raw: n8nRaw,
+      assistant_text: assistantText,
+      assistant_json: assistantJson,
     });
   } catch (error) {
-    // Handle errors and return 500 status
+    // Handle unexpected errors and return 500 status
     console.error("[POST /api/chat] Error proxying to n8n:", error);
     res.status(500).json({
       ok: false,
       error: error instanceof Error ? error.message : "Unknown error",
     });
   }
+});
+
+/**
+ * OPTIONS handler for CORS preflight requests
+ * Allows the frontend to make preflight requests to /api/chat
+ */
+app.options("/api/chat", (req, res) => {
+  res.status(204).end();
 });
 
 // Start the server

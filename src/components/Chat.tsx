@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from "react";
 import type { Message, ConnectionStatus } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ResponseModal } from "./ResponseModal";
-import { callN8nWebhook, type N8nResponseItem } from "../lib/n8n";
+import { callN8nWebhook, type BackendResponse } from "../lib/n8n";
 import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
 
 export function Chat() {
@@ -39,37 +39,32 @@ export function Chat() {
   // Generate unique ID for messages
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-  // Format assistant message from backend/n8n response
-  // Handles both formats: root-level fields or nested llm object
-  // Priority: response.llm.confirmation_question > stringify response.llm
-  const formatN8nResponseMessage = (item: N8nResponseItem): string => {
-    // Check if llm data is nested in llm object
-    if (item.llm?.confirmation_question) {
-      const { technology_guess, confidence, confirmation_question } = item.llm;
-      const confidencePercent = Math.round((confidence || 0) * 100);
-      return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${confirmation_question}`;
+  // Format assistant message from backend response
+  // Prefer displaying assistant_json nicely if available, otherwise display assistant_text
+  const formatBackendResponse = (response: BackendResponse): string => {
+    // If we have parsed JSON, display it nicely
+    if (response.assistant_json) {
+      const json = response.assistant_json;
+      
+      // Check if we have the expected LLM fields
+      if (json.confirmation_question) {
+        const technology_guess = json.technology_guess || "Unknown";
+        const confidence = json.confidence || 0;
+        const confidencePercent = Math.round(confidence * 100);
+        return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${json.confirmation_question}`;
+      }
+      
+      // If no confirmation_question but we have other fields, stringify the JSON
+      return JSON.stringify(json, null, 2);
     }
     
-    // Check if llm data is at root level
-    if (item.confirmation_question) {
-      const technology_guess = item.technology_guess || "Unknown";
-      const confidence = item.confidence || 0;
-      const confidencePercent = Math.round(confidence * 100);
-      return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${item.confirmation_question}`;
+    // Fallback to assistant_text if no JSON available
+    if (response.assistant_text) {
+      return response.assistant_text;
     }
     
-    // If we have llm object but no confirmation_question, stringify the llm object
-    if (item.llm) {
-      return JSON.stringify(item.llm, null, 2);
-    }
-    
-    // Fallback to llm_raw if available
-    if (item.llm_raw) {
-      return item.llm_raw;
-    }
-    
-    // Last resort: show raw response as JSON
-    return JSON.stringify(item, null, 2);
+    // Last resort: show error or empty message
+    return "No response content available";
   };
 
   // Handle sending a message
@@ -106,19 +101,11 @@ export function Chat() {
 
     try {
       // Call backend API (which proxies to n8n)
-      // Pass session_id if we have it in state
-      const item = await callN8nWebhook(userMessage.content, _sessionId);
-
-      // Store session_id and vuk_id in state for later use (if present)
-      if (item.session_id) {
-        setSessionId(item.session_id);
-      }
-      if (item.vuk_id) {
-        setVukId(item.vuk_id);
-      }
+      // Pass session_id and vuk_id if we have them in state
+      const backendResponse = await callN8nWebhook(userMessage.content, _sessionId, _vukId);
 
       // Store the raw response for the response panel
-      setAllResponses([item]); // Initialize with first response
+      setAllResponses([backendResponse.n8n_raw || backendResponse]); // Store n8n_raw if available
 
       // Update user message status
       const userMessageUpdated: Message = {
@@ -127,10 +114,11 @@ export function Chat() {
       };
 
       // Create final assistant message with formatted content
+      // Prefer displaying assistant_json nicely, otherwise display assistant_text
       const assistantMessage: Message = {
         id: thinkingId,
         role: "assistant",
-        content: formatN8nResponseMessage(item),
+        content: formatBackendResponse(backendResponse),
         createdAt: new Date().toISOString(),
       };
 
