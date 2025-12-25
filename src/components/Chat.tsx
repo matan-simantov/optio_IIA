@@ -8,7 +8,7 @@ import type { Message, ConnectionStatus } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ResponseModal } from "./ResponseModal";
 import { callN8nWebhook, type BackendResponse } from "../lib/n8n";
-import { loadChatHistory, saveChatHistory, clearChatHistory } from "../lib/storage";
+import { saveChatHistory, clearChatHistory } from "../lib/storage";
 
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -23,12 +23,11 @@ export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load chat history from localStorage on mount
+  // Clear chat history on mount - start with empty chat every time
+  // This ensures a clean slate on each page refresh/reload
   useEffect(() => {
-    const history = loadChatHistory();
-    if (history.length > 0) {
-      setMessages(history);
-    }
+    clearChatHistory();
+    setMessages([]);
   }, []);
 
   // Auto-scroll to bottom when messages change
