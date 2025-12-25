@@ -52,6 +52,9 @@ export function Chat() {
   const extractAssistantText = (data: BackendResponse): string => {
     // 1. Prefer assistant_text if non-empty
     if (data.assistant_text && typeof data.assistant_text === "string" && data.assistant_text.trim() !== "") {
+      if (DEBUG) {
+        console.log("[Chat] Using assistant_text:", data.assistant_text.substring(0, 100));
+      }
       return data.assistant_text;
     }
 
@@ -59,14 +62,25 @@ export function Chat() {
     if (data.n8n_raw && typeof data.n8n_raw === "object") {
       try {
         const n8nRaw = data.n8n_raw as any;
+        if (DEBUG) {
+          console.log("[Chat] n8n_raw structure:", {
+            hasLlm: !!n8nRaw.llm,
+            llmKeys: n8nRaw.llm ? Object.keys(n8nRaw.llm) : [],
+          });
+        }
         if (n8nRaw.llm && typeof n8nRaw.llm === "object") {
           const confirmationQuestion = n8nRaw.llm.confirmation_question;
           if (confirmationQuestion && typeof confirmationQuestion === "string" && confirmationQuestion.trim() !== "") {
+            if (DEBUG) {
+              console.log("[Chat] Using n8n_raw.llm.confirmation_question:", confirmationQuestion.substring(0, 100));
+            }
             return confirmationQuestion;
           }
         }
       } catch (e) {
-        // Silently continue to next fallback
+        if (DEBUG) {
+          console.error("[Chat] Error accessing n8n_raw.llm:", e);
+        }
       }
     }
 
@@ -75,39 +89,25 @@ export function Chat() {
       try {
         const n8nRaw = data.n8n_raw as any;
         if (n8nRaw.llm_raw && typeof n8nRaw.llm_raw === "string" && n8nRaw.llm_raw.trim() !== "") {
+          if (DEBUG) {
+            console.log("[Chat] Using n8n_raw.llm_raw:", n8nRaw.llm_raw.substring(0, 100));
+          }
           return n8nRaw.llm_raw;
         }
       } catch (e) {
-        // Silently continue to next fallback
+        if (DEBUG) {
+          console.error("[Chat] Error accessing n8n_raw.llm_raw:", e);
+        }
       }
     }
 
     // 4. Last resort: generic message
+    if (DEBUG) {
+      console.warn("[Chat] No assistant text found, using fallback message");
+    }
     return "(No assistant text returned)";
   };
 
-  // Format assistant message from backend response
-  // Prefer displaying assistant_json nicely if available, otherwise display extracted text
-  const formatBackendResponse = (response: BackendResponse): string => {
-    // If we have parsed JSON, display it nicely
-    if (response.assistant_json) {
-      const json = response.assistant_json;
-      
-      // Check if we have the expected LLM fields
-      if (json.confirmation_question) {
-        const technology_guess = json.technology_guess || "Unknown";
-        const confidence = json.confidence || 0;
-        const confidencePercent = Math.round(confidence * 100);
-        return `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${json.confirmation_question}`;
-      }
-      
-      // If no confirmation_question but we have other fields, stringify the JSON
-      return JSON.stringify(json, null, 2);
-    }
-    
-    // Fallback to extracted assistant text
-    return extractAssistantText(response);
-  };
 
   // Handle sending a message
   const handleSend = async () => {
@@ -177,12 +177,23 @@ export function Chat() {
         status: "success",
       };
 
+      // Format the final message content
+      // If we have assistant_json with confirmation_question, format it nicely
+      // Otherwise, use the extracted display text directly
+      let finalContent = displayText;
+      if (backendResponse.assistant_json && backendResponse.assistant_json.confirmation_question) {
+        const json = backendResponse.assistant_json;
+        const technology_guess = json.technology_guess || "Unknown";
+        const confidence = json.confidence || 0;
+        const confidencePercent = Math.round(confidence * 100);
+        finalContent = `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${json.confirmation_question}`;
+      }
+
       // Create final assistant message with formatted content
-      // Use extracted display text, formatted nicely if assistant_json is available
       const assistantMessage: Message = {
         id: thinkingId,
         role: "assistant",
-        content: formatBackendResponse({ ...backendResponse, assistant_text: displayText }),
+        content: finalContent,
         createdAt: new Date().toISOString(),
       };
 
