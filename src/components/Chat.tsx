@@ -39,8 +39,55 @@ export function Chat() {
   // Generate unique ID for messages
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+  // Debug flag for console logs (set to false to disable)
+  const DEBUG = true;
+
+  /**
+   * Extract assistant text from backend response with fallback chain
+   * Priority: assistant_text > n8n_raw.llm.confirmation_question > n8n_raw.llm_raw > generic message
+   * 
+   * @param data Backend response object
+   * @returns Extracted assistant text string
+   */
+  const extractAssistantText = (data: BackendResponse): string => {
+    // 1. Prefer assistant_text if non-empty
+    if (data.assistant_text && typeof data.assistant_text === "string" && data.assistant_text.trim() !== "") {
+      return data.assistant_text;
+    }
+
+    // 2. Fallback to n8n_raw.llm.confirmation_question if present
+    if (data.n8n_raw && typeof data.n8n_raw === "object") {
+      try {
+        const n8nRaw = data.n8n_raw as any;
+        if (n8nRaw.llm && typeof n8nRaw.llm === "object") {
+          const confirmationQuestion = n8nRaw.llm.confirmation_question;
+          if (confirmationQuestion && typeof confirmationQuestion === "string" && confirmationQuestion.trim() !== "") {
+            return confirmationQuestion;
+          }
+        }
+      } catch (e) {
+        // Silently continue to next fallback
+      }
+    }
+
+    // 3. Fallback to n8n_raw.llm_raw if present
+    if (data.n8n_raw && typeof data.n8n_raw === "object") {
+      try {
+        const n8nRaw = data.n8n_raw as any;
+        if (n8nRaw.llm_raw && typeof n8nRaw.llm_raw === "string" && n8nRaw.llm_raw.trim() !== "") {
+          return n8nRaw.llm_raw;
+        }
+      } catch (e) {
+        // Silently continue to next fallback
+      }
+    }
+
+    // 4. Last resort: generic message
+    return "(No assistant text returned)";
+  };
+
   // Format assistant message from backend response
-  // Prefer displaying assistant_json nicely if available, otherwise display assistant_text
+  // Prefer displaying assistant_json nicely if available, otherwise display extracted text
   const formatBackendResponse = (response: BackendResponse): string => {
     // If we have parsed JSON, display it nicely
     if (response.assistant_json) {
@@ -58,13 +105,8 @@ export function Chat() {
       return JSON.stringify(json, null, 2);
     }
     
-    // Fallback to assistant_text if no JSON available
-    if (response.assistant_text) {
-      return response.assistant_text;
-    }
-    
-    // Last resort: show error or empty message
-    return "No response content available";
+    // Fallback to extracted assistant text
+    return extractAssistantText(response);
   };
 
   // Handle sending a message
@@ -113,42 +155,17 @@ export function Chat() {
       // Log response status
       console.log("[Chat] Response status: ok =", backendResponse.ok);
       
-      // Extract assistant text from response
-      let assistantText = "";
-      
-      if (backendResponse.ok) {
-        // Prefer assistant_text if it's a non-empty string
-        if (backendResponse.assistant_text && typeof backendResponse.assistant_text === "string" && backendResponse.assistant_text.trim() !== "") {
-          assistantText = backendResponse.assistant_text;
-        } 
-        // Fallback: extract from n8n_raw structure
-        else if (backendResponse.n8n_raw) {
-          try {
-            const n8nRaw = backendResponse.n8n_raw as any;
-            if (Array.isArray(n8nRaw) && n8nRaw.length > 0) {
-              const firstItem = n8nRaw[0];
-              if (firstItem.output && Array.isArray(firstItem.output) && firstItem.output.length > 0) {
-                const firstOutput = firstItem.output[0];
-                if (firstOutput.content && Array.isArray(firstOutput.content)) {
-                  const outputTextContent = firstOutput.content.find(
-                    (item: any) => item.type === "output_text" && item.text
-                  );
-                  if (outputTextContent && outputTextContent.text) {
-                    assistantText = outputTextContent.text;
-                  }
-                }
-              }
-            }
-          } catch (extractError) {
-            console.error("[Chat] Error extracting text from n8n_raw:", extractError);
-          }
-        }
-        
-        // Log first 200 chars of assistant text
-        if (assistantText) {
-          const preview = assistantText.length > 200 ? assistantText.substring(0, 200) + "..." : assistantText;
-          console.log("[Chat] Assistant text preview (first 200 chars):", preview);
-        }
+      // Debug: Log raw JSON response
+      if (DEBUG) {
+        console.log("[Chat] Raw JSON response:", JSON.stringify(backendResponse, null, 2));
+      }
+
+      // Extract assistant text using helper function
+      const displayText = extractAssistantText(backendResponse);
+
+      // Debug: Log chosen display text
+      if (DEBUG) {
+        console.log("[Chat] Chosen displayText:", displayText);
       }
 
       // Store the raw response for the response panel
@@ -161,11 +178,11 @@ export function Chat() {
       };
 
       // Create final assistant message with formatted content
-      // Prefer displaying assistant_json nicely, otherwise display assistant_text
+      // Use extracted display text, formatted nicely if assistant_json is available
       const assistantMessage: Message = {
         id: thinkingId,
         role: "assistant",
-        content: assistantText ? formatBackendResponse({ ...backendResponse, assistant_text: assistantText }) : formatBackendResponse(backendResponse),
+        content: formatBackendResponse({ ...backendResponse, assistant_text: displayText }),
         createdAt: new Date().toISOString(),
       };
 
