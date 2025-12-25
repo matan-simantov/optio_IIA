@@ -86,54 +86,52 @@ export async function callN8nWebhook(userText: string, sessionId?: string | null
     throw new Error(`Failed to connect to backend: ${fetchError instanceof Error ? fetchError.message : "Unknown error"}`);
   }
 
-  // Dev-only: Log HTTP status
-  if (import.meta.env.DEV) {
-    console.log("[DEV] HTTP Status:", response.status, response.statusText);
-  }
-
-  // Get response text first to handle empty responses
-  const responseText = await response.text();
-
-  // Dev-only: Log raw response text and status code for debugging
-  if (import.meta.env.DEV) {
-    console.log("[DEV] Response status code:", response.status);
-    console.log("[DEV] Raw response body:", responseText);
-  }
-
-  // Check if request was successful
-  if (!response.ok) {
-    // Try to parse error response
-    let errorBody = responseText;
-    try {
-      const errorJson = JSON.parse(responseText);
-      errorBody = errorJson.error || JSON.stringify(errorJson);
-    } catch {
-      // Use raw text if not JSON
-    }
-    throw new Error(`Backend request failed: ${response.status} ${response.statusText}. ${errorBody}`);
-  }
-
-  // Check if response is empty
-  if (!responseText || responseText.trim() === "") {
-    throw new Error("Backend returned empty response");
-  }
-
-  // Parse JSON response
-  let rawResponse: unknown;
-  try {
-    rawResponse = JSON.parse(responseText);
-  } catch (parseError) {
-    // Log the problematic response for debugging
+    // Dev-only: Log HTTP status
     if (import.meta.env.DEV) {
-      console.error("[DEV] Failed to parse JSON response:", responseText);
+      console.log("[DEV] HTTP Status:", response.status, response.statusText);
     }
-    throw new Error(`Invalid JSON response from backend: ${parseError instanceof Error ? parseError.message : "Unknown parse error"}. Response: ${responseText.substring(0, 200)}`);
-  }
 
-  // Dev-only: Log parsed JSON response
-  if (import.meta.env.DEV) {
-    console.log("[DEV] Parsed JSON response:", rawResponse);
-  }
+    // Parse JSON response from backend
+    let backendResponse: { ok: boolean; n8n_status?: number; n8n?: unknown; error?: string };
+    try {
+      backendResponse = await response.json();
+    } catch (parseError) {
+      // If JSON parsing fails, try to get text
+      const responseText = await response.text();
+      if (import.meta.env.DEV) {
+        console.error("[DEV] Failed to parse backend JSON response:", responseText);
+      }
+      throw new Error(`Invalid JSON response from backend: ${parseError instanceof Error ? parseError.message : "Unknown parse error"}. Response: ${responseText.substring(0, 200)}`);
+    }
+
+    // Dev-only: Log backend response
+    if (import.meta.env.DEV) {
+      console.log("[DEV] Backend response:", backendResponse);
+      console.log("[DEV] n8n status:", backendResponse.n8n_status);
+      console.log("[DEV] n8n data:", backendResponse.n8n);
+    }
+
+    // Check if request was successful
+    if (!response.ok || !backendResponse.ok) {
+      const errorMessage = backendResponse.error || `Backend request failed: ${response.status} ${response.statusText}`;
+      if (import.meta.env.DEV) {
+        console.error("[DEV] Backend error:", response.status, errorMessage);
+      }
+      throw new Error(errorMessage);
+    }
+
+    // Extract n8n response from backend wrapper
+    // Backend returns: { ok: true, n8n_status: number, n8n: object|{raw: string} }
+    const rawResponse = backendResponse.n8n;
+    
+    if (!rawResponse) {
+      throw new Error("Backend response missing n8n data");
+    }
+
+    // Handle case where n8n returned non-JSON (wrapped as { raw: "<text>" })
+    if (typeof rawResponse === "object" && "raw" in rawResponse && Object.keys(rawResponse).length === 1) {
+      throw new Error(`n8n returned non-JSON response: ${(rawResponse as { raw: string }).raw}`);
+    }
 
   // Normalize response: handle both array and single object cases
   let item: N8nResponseItem;
