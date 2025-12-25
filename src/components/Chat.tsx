@@ -4,11 +4,17 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import type { Message, ConnectionStatus } from "../types";
+import type { Message, ConnectionStatus, MessageAttachment } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ResponseModal } from "./ResponseModal";
 import { callN8nWebhook, type BackendResponse } from "../lib/n8n";
 import { saveChatHistory, clearChatHistory } from "../lib/storage";
+import {
+  uploadPdfToN8n,
+  formatFileSize,
+  type UploadState,
+  type UploadedDoc,
+} from "../lib/pdfUpload";
 
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -22,6 +28,14 @@ export function Chat() {
   const [_vukId, setVukId] = useState<string | null>(null); // Store vuk_id from n8n response (for later use)
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // PDF attachment state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadState, setUploadState] = useState<UploadState>("idle");
+  const [uploadedDoc, setUploadedDoc] = useState<UploadedDoc | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Clear chat history on mount - start with empty chat every time
   // This ensures a clean slate on each page refresh/reload
@@ -107,10 +121,119 @@ export function Chat() {
     return "(No assistant text returned)";
   };
 
+  // Handle file selection from file picker
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (file.type !== "application/pdf") {
+      setUploadError("Only PDF files are supported");
+      return;
+    }
+
+    setSelectedFile(file);
+    setUploadError(null);
+    setUploadState("idle");
+    setUploadedDoc(null);
+  };
+
+  // Handle drag and drop
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    // Validate file type
+    if (file.type !== "application/pdf") {
+      setUploadError("Only PDF files are supported");
+      return;
+    }
+
+    setSelectedFile(file);
+    setUploadError(null);
+    setUploadState("idle");
+    setUploadedDoc(null);
+  };
+
+  // Remove attachment
+  const handleRemoveAttachment = () => {
+    setSelectedFile(null);
+    setUploadState("idle");
+    setUploadedDoc(null);
+    setUploadError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  // Upload PDF file
+  const handleUploadPdf = async (): Promise<UploadedDoc> => {
+    if (!selectedFile) {
+      throw new Error("No file selected");
+    }
+
+    setUploadState("uploading");
+    setUploadError(null);
+
+    try {
+      const doc = await uploadPdfToN8n(selectedFile, _sessionId);
+      setUploadedDoc(doc);
+      setUploadState("uploaded");
+      return doc;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Upload failed";
+      setUploadError(errorMessage);
+      setUploadState("error");
+      throw error;
+    }
+  };
 
   // Handle sending a message
   const handleSend = async () => {
     if (!input.trim() || isSending) return;
+
+    // If there's a file attached and not uploaded yet, upload it first
+    let attachments: MessageAttachment[] | undefined;
+    if (selectedFile) {
+      if (uploadState !== "uploaded" || !uploadedDoc) {
+        try {
+          const doc = await handleUploadPdf();
+          attachments = [
+            {
+              type: "pdf",
+              doc_id: doc.doc_id,
+              filename: selectedFile.name,
+            },
+          ];
+        } catch (error) {
+          // Upload failed, don't send message
+          return;
+        }
+      } else {
+        // File already uploaded, use existing doc_id
+        attachments = [
+          {
+            type: "pdf",
+            doc_id: uploadedDoc.doc_id,
+            filename: selectedFile.name,
+          },
+        ];
+      }
+    }
 
     const userMessage: Message = {
       id: generateId(),
@@ -118,6 +241,7 @@ export function Chat() {
       content: input.trim(),
       createdAt: new Date().toISOString(),
       status: "sending",
+      attachments,
     };
 
     // Add user message immediately
@@ -277,6 +401,15 @@ export function Chat() {
         return finalMessages;
       });
 
+      // Clear attachment state after successful send
+      setSelectedFile(null);
+      setUploadState("idle");
+      setUploadedDoc(null);
+      setUploadError(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+
       setConnectionStatus("success");
     } catch (error) {
       // Log error for debugging
@@ -393,15 +526,152 @@ export function Chat() {
       </div>
 
       {/* Input area */}
-      <div className="p-4 border-t border-gray-200 bg-white">
+      <div
+        className="p-4 border-t border-gray-200 bg-white relative"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drag and drop overlay */}
+        {isDragging && (
+          <div className="absolute inset-0 bg-blue-100 bg-opacity-90 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-10">
+            <p className="text-blue-700 font-medium">Drop PDF file here</p>
+          </div>
+        )}
+
+        {/* Attachment chip */}
+        {selectedFile && (
+          <div className="mb-2 flex items-center gap-2 p-2 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <svg
+                  className="w-5 h-5 text-red-600 flex-shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                  />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {selectedFile.name}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {formatFileSize(selectedFile.size)}
+                  </p>
+                </div>
+              </div>
+              {/* Upload status */}
+              {uploadState === "uploading" && (
+                <div className="mt-1 flex items-center gap-2 text-xs text-blue-600">
+                  <svg
+                    className="animate-spin h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  <span>Uploading...</span>
+                </div>
+              )}
+              {uploadState === "uploaded" && uploadedDoc && (
+                <div className="mt-1 text-xs text-green-600">
+                  ✓ Uploaded (ID: {uploadedDoc.doc_id.substring(0, 8)}...)
+                </div>
+              )}
+              {uploadState === "error" && uploadError && (
+                <div className="mt-1 flex items-center gap-2">
+                  <p className="text-xs text-red-600">{uploadError}</p>
+                  <button
+                    onClick={handleUploadPdf}
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+            </div>
+            {uploadState !== "uploading" && (
+              <button
+                onClick={handleRemoveAttachment}
+                className="text-gray-400 hover:text-red-600 transition-colors"
+                aria-label="Remove attachment"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            onChange={handleFileSelect}
+            className="hidden"
+            id="file-input"
+          />
+
+          {/* Attach button */}
+          <label
+            htmlFor="file-input"
+            className="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg cursor-pointer transition-colors flex-shrink-0"
+            title="Attach PDF"
+          >
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+              />
+            </svg>
+          </label>
+
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type your message... (Shift+Enter for newline)"
-            disabled={isSending}
+            disabled={isSending || uploadState === "uploading"}
             rows={1}
             className="flex-1 px-4 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
             style={{
@@ -416,7 +686,12 @@ export function Chat() {
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isSending}
+            disabled={
+              !input.trim() ||
+              isSending ||
+              uploadState === "uploading" ||
+              (selectedFile !== null && uploadState === "error")
+            }
             className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
           >
             Send

@@ -5,7 +5,11 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "echo 'Backend build: no build step needed' && exit 0",
+    "lint": "echo 'No linting configured for backend' && exit 0",
+    "typecheck": "echo 'No TypeScript in backend' && exit 0",
+    "test": "echo 'No tests configured yet' && exit 0"
   },
   "engines": {
     "node": ">=18"

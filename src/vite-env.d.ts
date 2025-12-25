@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly VITE_N8N_STATUS_POLL_URL?: string;
+  readonly VITE_WEBHOOK_UPLOAD_URL?: string;
 }
 
 interface ImportMeta {

@@ -19,6 +19,13 @@ export interface DebugInfo {
   error?: string; // Error message if request failed
 }
 
+// Attachment structure for messages
+export interface MessageAttachment {
+  type: "pdf";
+  doc_id: string;
+  filename: string;
+}
+
 // Chat message structure
 export interface Message {
   id: string; // Unique identifier for the message
@@ -27,6 +34,7 @@ export interface Message {
   createdAt: string; // ISO timestamp
   status?: MessageStatus; // Status for user messages (sending/success/error)
   debug?: DebugInfo; // Debug information (only for assistant messages with webhook responses)
+  attachments?: MessageAttachment[]; // Attachments (e.g., PDF documents)
 }
 
 // Webhook request payload

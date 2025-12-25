@@ -1,0 +1,101 @@
+name: CI
+
+# Run on push and pull requests to main branch
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Frontend CI job
+  frontend:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./
+    
+    steps:
+      # Checkout the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Setup Node.js version 20
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      # Install dependencies using npm ci (faster and more reliable than npm install)
+      - name: Install dependencies
+        run: npm ci
+      
+      # Run linting if the script exists
+      - name: Run linter
+        run: npm run lint
+        continue-on-error: false
+      
+      # Run TypeScript type checking if the script exists
+      - name: Run typecheck
+        run: npm run typecheck
+        continue-on-error: false
+      
+      # Run tests if the script exists
+      - name: Run tests
+        run: npm run test
+        continue-on-error: false
+      
+      # Build the frontend (must succeed)
+      - name: Build frontend
+        run: npm run build
+        continue-on-error: false
+
+  # Backend CI job
+  backend:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./backend
+    
+    steps:
+      # Checkout the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Setup Node.js version 20
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      # Install dependencies using npm ci
+      - name: Install dependencies
+        run: npm ci
+      
+      # Run linting if the script exists
+      - name: Run linter
+        run: npm run lint
+        continue-on-error: false
+      
+      # Run typecheck if the script exists (may not be applicable for backend)
+      - name: Run typecheck
+        run: npm run typecheck
+        continue-on-error: false
+      
+      # Run tests if the script exists
+      - name: Run tests
+        run: npm run test
+        continue-on-error: false
+      
+      # Build the backend (or verify it can start)
+      - name: Build backend
+        run: npm run build
+        continue-on-error: false
+
