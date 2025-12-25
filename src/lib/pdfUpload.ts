@@ -40,11 +40,15 @@ export async function uploadPdfToN8n(
     throw new Error("Only PDF files are supported");
   }
 
-  // Get webhook URL from environment variable or use default
-  // Can be swapped to backend proxy later by changing this URL
-  const webhookUrl =
-    import.meta.env.VITE_WEBHOOK_UPLOAD_URL ||
-    "https://optio-xrl.app.n8n.cloud/webhook/webhook/xrl/document/upload";
+  // Get backend API URL (use backend proxy to avoid CORS issues)
+  const API_URL = import.meta.env.VITE_API_URL;
+  if (!API_URL) {
+    throw new Error("Missing VITE_API_URL environment variable");
+  }
+
+  // Use backend proxy endpoint instead of direct n8n webhook
+  // This avoids CORS issues and allows us to add authentication/validation later
+  const uploadUrl = `${API_URL}/api/upload`;
 
   // Create FormData for multipart/form-data upload
   const formData = new FormData();
@@ -54,8 +58,8 @@ export async function uploadPdfToN8n(
     formData.append("session_id", sessionId);
   }
 
-  // Upload file to n8n webhook
-  const response = await fetch(webhookUrl, {
+  // Upload file via backend proxy
+  const response = await fetch(uploadUrl, {
     method: "POST",
     body: formData,
   });

@@ -3,8 +3,12 @@
 
 import express from "express"
 import cors from "cors"
+import multer from "multer"
 
 const app = express()
+
+// Configure multer for file uploads (memory storage)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }) // 10MB limit
 
 app.use(express.json({ limit: "2mb" }))
 
@@ -20,6 +24,7 @@ app.use(
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || ""
 const N8N_CALLBACK_SECRET = process.env.N8N_CALLBACK_SECRET || ""
+const N8N_UPLOAD_WEBHOOK_URL = process.env.N8N_UPLOAD_WEBHOOK_URL || "https://optio-xrl.app.n8n.cloud/webhook/webhook/xrl/document/upload"
 
 // Small health route so you won't see "Cannot GET /"
 app.get("/", (_req, res) => {
@@ -121,6 +126,101 @@ app.post("/api/chat", async (req, res) => {
     const payload = buildAssistantPayload(raw)
     return res.status(200).json(payload)
   } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: "backend_error",
+      message: err?.message || String(err),
+    })
+  }
+})
+
+// PDF upload endpoint - proxies file upload to n8n webhook
+app.post("/api/upload", upload.single("file"), async (req, res) => {
+  if (!N8N_UPLOAD_WEBHOOK_URL) {
+    return res.status(500).json({ ok: false, error: "Missing N8N_UPLOAD_WEBHOOK_URL" })
+  }
+
+  try {
+    // Validate file was uploaded
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: "No file provided" })
+    }
+
+    // Validate file type
+    if (req.file.mimetype !== "application/pdf") {
+      return res.status(400).json({ ok: false, error: "Only PDF files are supported" })
+    }
+
+    // Create FormData for forwarding to n8n
+    // Use FormData API available in Node.js 18+
+    const formData = new FormData()
+    
+    // Create a Blob from the file buffer
+    const blob = new Blob([req.file.buffer], { type: req.file.mimetype })
+    formData.append("file", blob, req.file.originalname)
+    formData.append("filename", req.file.originalname)
+    
+    // Include session_id if provided in request body
+    if (req.body.session_id) {
+      formData.append("session_id", req.body.session_id)
+    }
+
+    // Prepare headers for n8n request
+    const headers = {}
+    if (N8N_CALLBACK_SECRET) {
+      headers["x-callback-secret"] = N8N_CALLBACK_SECRET
+    }
+
+    // Forward upload to n8n webhook
+    const upstream = await fetch(N8N_UPLOAD_WEBHOOK_URL, {
+      method: "POST",
+      headers,
+      body: formData,
+    })
+
+    // Handle non-OK responses
+    if (!upstream.ok) {
+      const errorText = await upstream.text()
+      return res.status(upstream.status).json({
+        ok: false,
+        error: "n8n_upload_error",
+        status: upstream.status,
+        message: errorText,
+      })
+    }
+
+    // Parse JSON response from n8n
+    let uploadResponse
+    try {
+      uploadResponse = await upstream.json()
+    } catch (parseError) {
+      return res.status(502).json({
+        ok: false,
+        error: "invalid_response",
+        message: "Invalid JSON response from n8n",
+      })
+    }
+
+    // Validate response includes doc_id
+    if (!uploadResponse.doc_id || typeof uploadResponse.doc_id !== "string") {
+      return res.status(502).json({
+        ok: false,
+        error: "invalid_response",
+        message: "Response missing doc_id",
+        response: uploadResponse,
+      })
+    }
+
+    // Return success with uploaded document info
+    return res.status(200).json({
+      ok: true,
+      doc_id: uploadResponse.doc_id,
+      bucket: uploadResponse.bucket,
+      path: uploadResponse.path,
+      status: uploadResponse.status,
+    })
+  } catch (err) {
+    console.error("[POST /api/upload] Error:", err)
     return res.status(500).json({
       ok: false,
       error: "backend_error",
