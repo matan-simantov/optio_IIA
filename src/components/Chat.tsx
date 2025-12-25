@@ -179,8 +179,11 @@ export function Chat() {
 
       // Format the final message content
       // If we have assistant_json with confirmation_question, format it nicely
+      // Otherwise, check n8n_raw.llm for formatted display
       // Otherwise, use the extracted display text directly
       let finalContent = displayText;
+      
+      // Check assistant_json first
       if (backendResponse.assistant_json && backendResponse.assistant_json.confirmation_question) {
         const json = backendResponse.assistant_json;
         const technology_guess = json.technology_guess || "Unknown";
@@ -188,19 +191,84 @@ export function Chat() {
         const confidencePercent = Math.round(confidence * 100);
         finalContent = `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${json.confirmation_question}`;
       }
+      // Fallback: check n8n_raw.llm for formatted display
+      else if (backendResponse.n8n_raw && typeof backendResponse.n8n_raw === "object") {
+        try {
+          const n8nRaw = backendResponse.n8n_raw as any;
+          if (n8nRaw.llm && typeof n8nRaw.llm === "object" && n8nRaw.llm.confirmation_question) {
+            const technology_guess = n8nRaw.llm.technology_guess || "Unknown";
+            const confidence = n8nRaw.llm.confidence || 0;
+            const confidencePercent = Math.round(confidence * 100);
+            finalContent = `Technology: ${technology_guess}\nConfidence: ${confidencePercent}%\n\n${n8nRaw.llm.confirmation_question}`;
+          }
+        } catch (e) {
+          // If formatting fails, use displayText as-is
+          if (DEBUG) {
+            console.error("[Chat] Error formatting from n8n_raw.llm:", e);
+          }
+        }
+      }
+
+      // Debug: Log final content that will be displayed
+      if (DEBUG) {
+        console.log("[Chat] Final content to display:", finalContent.substring(0, 200));
+      }
 
       // Create final assistant message with formatted content
+      // Make sure status is not "sending" so MessageBubble doesn't show thinking indicator
       const assistantMessage: Message = {
         id: thinkingId,
         role: "assistant",
         content: finalContent,
         createdAt: new Date().toISOString(),
+        status: undefined, // Explicitly set to undefined to ensure it's not "sending"
       };
 
+      // Debug: Log the assistant message before replacing
+      if (DEBUG) {
+        console.log("[Chat] Assistant message to replace thinking:", {
+          id: assistantMessage.id,
+          contentLength: assistantMessage.content.length,
+          contentPreview: assistantMessage.content.substring(0, 100),
+        });
+      }
+
       // Replace thinking message with final message and update user message
-      const finalMessages = updatedMessages
-        .map((m) => (m.id === userMessage.id ? userMessageUpdated : m))
-        .map((m) => (m.id === thinkingId ? assistantMessage : m));
+      // First, find the index of the thinking message
+      const thinkingIndex = updatedMessages.findIndex((m) => m.id === thinkingId);
+      
+      if (DEBUG) {
+        console.log("[Chat] Thinking message index:", thinkingIndex);
+        console.log("[Chat] Total messages before replacement:", updatedMessages.length);
+        console.log("[Chat] Thinking message before replacement:", {
+          id: updatedMessages[thinkingIndex]?.id,
+          content: updatedMessages[thinkingIndex]?.content,
+          status: updatedMessages[thinkingIndex]?.status,
+        });
+      }
+
+      // Create new array with replaced messages
+      const finalMessages = updatedMessages.map((m) => {
+        if (m.id === userMessage.id) {
+          return userMessageUpdated;
+        }
+        if (m.id === thinkingId) {
+          return assistantMessage;
+        }
+        return m;
+      });
+
+      // Debug: Verify the replacement worked
+      if (DEBUG) {
+        const replacedMessage = finalMessages.find((m) => m.id === thinkingId);
+        console.log("[Chat] After replacement, message found:", {
+          id: replacedMessage?.id,
+          contentLength: replacedMessage?.content?.length || 0,
+          contentPreview: replacedMessage?.content?.substring(0, 100) || "NOT FOUND",
+          status: replacedMessage?.status,
+        });
+        console.log("[Chat] Total messages after replacement:", finalMessages.length);
+      }
 
       setMessages(finalMessages);
       saveChatHistory(finalMessages);
