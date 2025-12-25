@@ -88,10 +88,8 @@ export async function callN8nWebhook(
     throw new Error(`Failed to connect to backend: ${fetchError instanceof Error ? fetchError.message : "Unknown error"}`);
   }
 
-  // Dev-only: Log HTTP status
-  if (import.meta.env.DEV) {
-    console.log("[DEV] HTTP Status:", response.status, response.statusText);
-  }
+  // Log HTTP status code (always, not just in dev)
+  console.log("[Chat] HTTP Status:", response.status, response.statusText);
 
   // Parse JSON response from backend
   let backendResponse: BackendResponse;

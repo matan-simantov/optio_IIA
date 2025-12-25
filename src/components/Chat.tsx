@@ -87,25 +87,72 @@ export function Chat() {
     setIsSending(true);
     setConnectionStatus("sending");
 
-    // Create thinking message (temporary)
-    const thinkingId = generateId();
+    // Create thinking message (temporary) with "Thinking..." text
+    const thinkingId = `pending-${Date.now()}`;
     const thinkingMessage: Message = {
       id: thinkingId,
       role: "assistant",
-      content: "",
+      content: "Thinking…",
       createdAt: new Date().toISOString(),
       status: "sending",
     };
 
+    // Add thinking message immediately
     setMessages([...updatedMessages, thinkingMessage]);
+
+    // Log request URL (no secrets)
+    const API_URL = import.meta.env.VITE_API_URL;
+    const requestUrl = `${API_URL}/api/chat`;
+    console.log("[Chat] Request URL:", requestUrl);
 
     try {
       // Call backend API (which proxies to n8n)
       // Pass session_id and vuk_id if we have them in state
       const backendResponse = await callN8nWebhook(userMessage.content, _sessionId, _vukId);
 
+      // Log response status
+      console.log("[Chat] Response status: ok =", backendResponse.ok);
+      
+      // Extract assistant text from response
+      let assistantText = "";
+      
+      if (backendResponse.ok) {
+        // Prefer assistant_text if it's a non-empty string
+        if (backendResponse.assistant_text && typeof backendResponse.assistant_text === "string" && backendResponse.assistant_text.trim() !== "") {
+          assistantText = backendResponse.assistant_text;
+        } 
+        // Fallback: extract from n8n_raw structure
+        else if (backendResponse.n8n_raw) {
+          try {
+            const n8nRaw = backendResponse.n8n_raw as any;
+            if (Array.isArray(n8nRaw) && n8nRaw.length > 0) {
+              const firstItem = n8nRaw[0];
+              if (firstItem.output && Array.isArray(firstItem.output) && firstItem.output.length > 0) {
+                const firstOutput = firstItem.output[0];
+                if (firstOutput.content && Array.isArray(firstOutput.content)) {
+                  const outputTextContent = firstOutput.content.find(
+                    (item: any) => item.type === "output_text" && item.text
+                  );
+                  if (outputTextContent && outputTextContent.text) {
+                    assistantText = outputTextContent.text;
+                  }
+                }
+              }
+            }
+          } catch (extractError) {
+            console.error("[Chat] Error extracting text from n8n_raw:", extractError);
+          }
+        }
+        
+        // Log first 200 chars of assistant text
+        if (assistantText) {
+          const preview = assistantText.length > 200 ? assistantText.substring(0, 200) + "..." : assistantText;
+          console.log("[Chat] Assistant text preview (first 200 chars):", preview);
+        }
+      }
+
       // Store the raw response for the response panel
-      setAllResponses([backendResponse.n8n_raw || backendResponse]); // Store n8n_raw if available
+      setAllResponses([backendResponse.n8n_raw || backendResponse]);
 
       // Update user message status
       const userMessageUpdated: Message = {
@@ -118,7 +165,7 @@ export function Chat() {
       const assistantMessage: Message = {
         id: thinkingId,
         role: "assistant",
-        content: formatBackendResponse(backendResponse),
+        content: assistantText ? formatBackendResponse({ ...backendResponse, assistant_text: assistantText }) : formatBackendResponse(backendResponse),
         createdAt: new Date().toISOString(),
       };
 
@@ -132,13 +179,13 @@ export function Chat() {
       setConnectionStatus("success");
     } catch (error) {
       // Log error for debugging
-      console.error("Error calling n8n webhook:", error);
+      console.error("[Chat] Error calling backend:", error);
       
-      // Handle unexpected errors
+      // Handle errors - replace thinking message with error message
       const errorMessage: Message = {
         id: thinkingId,
         role: "assistant",
-        content: `❌ Run failed. Reason: ${error instanceof Error ? error.message : "Unknown error"}`,
+        content: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
         createdAt: new Date().toISOString(),
         debug: {
           rawResponse: {},
@@ -163,9 +210,7 @@ export function Chat() {
       setIsSending(false);
       // Reset connection status after a delay
       setTimeout(() => {
-        if (connectionStatus !== "idle") {
-          setConnectionStatus("idle");
-        }
+        setConnectionStatus("idle");
       }, 3000);
     }
   };

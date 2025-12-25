@@ -43,8 +43,8 @@ function formatDebugResponse(rawResponse: string | object): string {
 export function MessageBubble({ message }: MessageBubbleProps) {
   const [showDebug, setShowDebug] = useState(false);
   const isUser = message.role === "user";
-  // Show thinking indicator if it's an assistant message with empty content and sending status
-  const isThinking = !isUser && message.content === "" && message.status === "sending";
+  // Show thinking indicator if it's an assistant message with "Thinking…" content and sending status
+  const isThinking = !isUser && (message.content === "Thinking…" || message.content === "") && message.status === "sending";
   const hasDebug = message.debug !== undefined;
 
   // Use typewriter effect for assistant messages (only when content exists and not thinking)
