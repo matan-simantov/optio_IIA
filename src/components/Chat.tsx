@@ -139,8 +139,9 @@ export function Chat() {
       status: "sending",
     };
 
-    // Add thinking message immediately
-    setMessages([...updatedMessages, thinkingMessage]);
+    // Add thinking message immediately - create messagesWithThinking for later use
+    const messagesWithThinking = [...updatedMessages, thinkingMessage];
+    setMessages(messagesWithThinking);
 
     // Log request URL (no secrets)
     const API_URL = import.meta.env.VITE_API_URL;
@@ -234,44 +235,49 @@ export function Chat() {
       }
 
       // Replace thinking message with final message and update user message
-      // First, find the index of the thinking message
-      const thinkingIndex = updatedMessages.findIndex((m) => m.id === thinkingId);
-      
-      if (DEBUG) {
-        console.log("[Chat] Thinking message index:", thinkingIndex);
-        console.log("[Chat] Total messages before replacement:", updatedMessages.length);
-        console.log("[Chat] Thinking message before replacement:", {
-          id: updatedMessages[thinkingIndex]?.id,
-          content: updatedMessages[thinkingIndex]?.content,
-          status: updatedMessages[thinkingIndex]?.status,
-        });
-      }
+      // Use the current messages state which includes the thinking message
+      // We need to get the current messages that include thinking message
+      setMessages((currentMessages) => {
+        // Find the index of the thinking message in current messages
+        const thinkingIndex = currentMessages.findIndex((m) => m.id === thinkingId);
+        
+        if (DEBUG) {
+          console.log("[Chat] Thinking message index:", thinkingIndex);
+          console.log("[Chat] Total messages before replacement:", currentMessages.length);
+          console.log("[Chat] Thinking message before replacement:", {
+            id: currentMessages[thinkingIndex]?.id,
+            content: currentMessages[thinkingIndex]?.content,
+            status: currentMessages[thinkingIndex]?.status,
+          });
+        }
 
-      // Create new array with replaced messages
-      const finalMessages = updatedMessages.map((m) => {
-        if (m.id === userMessage.id) {
-          return userMessageUpdated;
+        // Create new array with replaced messages
+        const finalMessages = currentMessages.map((m) => {
+          if (m.id === userMessage.id) {
+            return userMessageUpdated;
+          }
+          if (m.id === thinkingId) {
+            return assistantMessage;
+          }
+          return m;
+        });
+
+        // Debug: Verify the replacement worked
+        if (DEBUG) {
+          const replacedMessage = finalMessages.find((m) => m.id === thinkingId);
+          console.log("[Chat] After replacement, message found:", {
+            id: replacedMessage?.id,
+            contentLength: replacedMessage?.content?.length || 0,
+            contentPreview: replacedMessage?.content?.substring(0, 100) || "NOT FOUND",
+            status: replacedMessage?.status,
+          });
+          console.log("[Chat] Total messages after replacement:", finalMessages.length);
         }
-        if (m.id === thinkingId) {
-          return assistantMessage;
-        }
-        return m;
+
+        saveChatHistory(finalMessages);
+        return finalMessages;
       });
 
-      // Debug: Verify the replacement worked
-      if (DEBUG) {
-        const replacedMessage = finalMessages.find((m) => m.id === thinkingId);
-        console.log("[Chat] After replacement, message found:", {
-          id: replacedMessage?.id,
-          contentLength: replacedMessage?.content?.length || 0,
-          contentPreview: replacedMessage?.content?.substring(0, 100) || "NOT FOUND",
-          status: replacedMessage?.status,
-        });
-        console.log("[Chat] Total messages after replacement:", finalMessages.length);
-      }
-
-      setMessages(finalMessages);
-      saveChatHistory(finalMessages);
       setConnectionStatus("success");
     } catch (error) {
       // Log error for debugging
