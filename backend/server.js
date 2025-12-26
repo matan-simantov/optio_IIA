@@ -136,18 +136,29 @@ app.post("/api/chat", async (req, res) => {
 
 // PDF upload endpoint - proxies file upload to n8n webhook
 app.post("/api/upload", upload.single("file"), async (req, res) => {
+  console.log("[POST /api/upload] Request received")
+  
   if (!N8N_UPLOAD_WEBHOOK_URL) {
+    console.error("[POST /api/upload] Missing N8N_UPLOAD_WEBHOOK_URL")
     return res.status(500).json({ ok: false, error: "Missing N8N_UPLOAD_WEBHOOK_URL" })
   }
 
   try {
     // Validate file was uploaded
     if (!req.file) {
+      console.log("[POST /api/upload] No file in request")
       return res.status(400).json({ ok: false, error: "No file provided" })
     }
 
+    console.log("[POST /api/upload] File received:", {
+      filename: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+    })
+
     // Validate file type
     if (req.file.mimetype !== "application/pdf") {
+      console.log("[POST /api/upload] Invalid file type:", req.file.mimetype)
       return res.status(400).json({ ok: false, error: "Only PDF files are supported" })
     }
 
@@ -172,15 +183,19 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     }
 
     // Forward upload to n8n webhook
+    console.log("[POST /api/upload] Forwarding to n8n:", N8N_UPLOAD_WEBHOOK_URL)
     const upstream = await fetch(N8N_UPLOAD_WEBHOOK_URL, {
       method: "POST",
       headers,
       body: formData,
     })
 
+    console.log("[POST /api/upload] n8n response status:", upstream.status)
+
     // Handle non-OK responses
     if (!upstream.ok) {
       const errorText = await upstream.text()
+      console.error("[POST /api/upload] n8n error:", upstream.status, errorText.substring(0, 200))
       return res.status(upstream.status).json({
         ok: false,
         error: "n8n_upload_error",
@@ -212,6 +227,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     }
 
     // Return success with uploaded document info
+    console.log("[POST /api/upload] Upload successful, doc_id:", uploadResponse.doc_id)
     return res.status(200).json({
       ok: true,
       doc_id: uploadResponse.doc_id,
@@ -232,4 +248,8 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
 const PORT = Number(process.env.PORT || 3000)
 app.listen(PORT, () => {
   console.log(`Backend listening on ${PORT}`)
+  console.log(`N8N Webhook URL: ${N8N_WEBHOOK_URL || "NOT SET"}`)
+  console.log(`N8N Upload Webhook URL: ${N8N_UPLOAD_WEBHOOK_URL || "NOT SET"}`)
+  console.log(`Frontend Origin: ${FRONTEND_ORIGIN || "NOT SET"}`)
+  console.log(`Available endpoints: GET /, GET /health, POST /api/chat, POST /api/upload`)
 })
