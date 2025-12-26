@@ -2,11 +2,8 @@
  * PDF Text Extraction Helper
  * Extracts text content from PDF files using pdf-parse library
  * 
- * Note: pdf-parse is a CommonJS module, so we use createRequire for ESM compatibility
+ * Note: pdf-parse is a CommonJS module, so we use dynamic import for ESM compatibility
  */
-
-import { createRequire } from "module"
-const require = createRequire(import.meta.url)
 
 /**
  * Extract text content from a PDF buffer
@@ -16,8 +13,10 @@ const require = createRequire(import.meta.url)
  */
 export async function extractTextFromPdf(pdfBuffer) {
   try {
-    // Dynamically require pdf-parse to avoid module load issues
-    const pdfParse = require("pdf-parse")
+    // Use dynamic import to load pdf-parse (CommonJS module) in ESM context
+    const pdfParseModule = await import("pdf-parse")
+    // pdf-parse exports a default function, access it via .default
+    const pdfParse = pdfParseModule.default || pdfParseModule
     
     // pdf-parse returns a promise that resolves to { text, ... }
     const data = await pdfParse(pdfBuffer)
