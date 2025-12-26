@@ -334,69 +334,78 @@ async function handlePdfUpload(req, res) {
       console.log("[POST /api/upload] Extracted text length:", extractedText.length)
     }
 
-    // Step 4: Chunk the extracted text
-    console.log("[POST /api/upload] Chunking text...")
-    const chunks = splitIntoChunks(extractedText, 1200, 200)
-    console.log("[POST /api/upload] Created", chunks.length, "chunks")
+    // Step 4: Chunk the extracted text (only if text was extracted)
+    let chunks = []
+    let finalStatus = "uploaded"
+    
+    if (extractedText.length > 0) {
+      console.log("[POST /api/upload] Chunking text...")
+      chunks = splitIntoChunks(extractedText, 1200, 200)
+      console.log("[POST /api/upload] Created", chunks.length, "chunks")
 
-    // Step 5: Insert chunks into Postgres in batches of 200
-    if (chunks.length > 0) {
-      console.log("[POST /api/upload] Inserting chunks into database...")
-      const chunkRecords = chunks.map((chunk, index) => ({
-        doc_id: docId,
-        chunk_index: index,
-        content: chunk.content,
-        metadata_json: {
-          source: "pdf",
-          file_name: fileName,
-          char_start: chunk.char_start,
-          char_end: chunk.char_end,
-        },
-        embedding: null, // No embeddings in MVP
-      }))
+      // Step 5: Insert chunks into Postgres in batches of 200
+      if (chunks.length > 0) {
+        console.log("[POST /api/upload] Inserting chunks into database...")
+        const chunkRecords = chunks.map((chunk, index) => ({
+          doc_id: docId,
+          chunk_index: index,
+          content: chunk.content,
+          metadata_json: {
+            source: "pdf",
+            file_name: fileName,
+            char_start: chunk.char_start,
+            char_end: chunk.char_end,
+          },
+          embedding: null, // No embeddings in MVP
+        }))
 
-      // Insert in batches of 200
-      const batchSize = 200
-      for (let i = 0; i < chunkRecords.length; i += batchSize) {
-        const batch = chunkRecords.slice(i, i + batchSize)
-        const { error: chunkError } = await supabase.from("document_chunks").insert(batch)
+        // Insert in batches of 200
+        const batchSize = 200
+        for (let i = 0; i < chunkRecords.length; i += batchSize) {
+          const batch = chunkRecords.slice(i, i + batchSize)
+          const { error: chunkError } = await supabase.from("document_chunks").insert(batch)
 
-        if (chunkError) {
-          console.error("[POST /api/upload] Chunk insert error:", chunkError)
-          // Update document status to failed
-          await supabase
-            .from("documents")
-            .update({
-              status: "failed",
-              metadata_json: {
-                ...documentRecord.metadata_json,
-                error: chunkError.message,
-              },
-            })
-            .eq("doc_id", docId)
+          if (chunkError) {
+            console.error("[POST /api/upload] Chunk insert error:", chunkError)
+            // Update document status but don't fail - PDF is still uploaded
+            await supabase
+              .from("documents")
+              .update({
+                status: "uploaded",
+                metadata_json: {
+                  ...documentRecord.metadata_json,
+                  chunk_error: chunkError.message,
+                },
+              })
+              .eq("doc_id", docId)
+            
+            // Continue without chunks - PDF is still uploaded successfully
+            chunks = []
+            break
+          }
+        }
 
-          return res.status(500).json({
-            ok: false,
-            error: "chunk_insert_error",
-            message: chunkError.message,
-            doc_id: docId,
-          })
+        if (chunks.length > 0) {
+          console.log("[POST /api/upload] All chunks inserted")
+          finalStatus = "chunked"
         }
       }
-
-      console.log("[POST /api/upload] All chunks inserted")
+    } else {
+      console.log("[POST /api/upload] No text extracted - skipping chunking")
+      // PDF uploaded successfully but no text chunks
+      finalStatus = "uploaded"
     }
 
-    // Step 6: Update document status to "chunked"
-    console.log("[POST /api/upload] Updating document status to 'chunked'...")
+    // Step 6: Update document status
+    console.log("[POST /api/upload] Updating document status to", finalStatus)
     const { error: updateError } = await supabase
       .from("documents")
-      .update({ status: "chunked" })
+      .update({ status: finalStatus })
       .eq("doc_id", docId)
 
     if (updateError) {
       console.error("[POST /api/upload] Status update error:", updateError)
-      // Don't fail the request, chunks are already inserted
+      // Don't fail the request, file is already uploaded
     }
 
     // Return success response
