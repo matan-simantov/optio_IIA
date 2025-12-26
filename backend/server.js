@@ -409,10 +409,10 @@ async function handlePdfUpload(req, res) {
     }
 
     // Return success response
-    console.log("[POST /api/upload] Upload successful, doc_id:", docId)
+    console.log("[POST /api/upload] Upload successful, doc_id:", docId, "status:", finalStatus)
     return res.status(200).json({
       doc_id: docId,
-      status: "chunked",
+      status: finalStatus,
       chunks_count: chunks.length,
       file_name: fileName,
       storage_path: storagePath,
