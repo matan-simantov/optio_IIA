@@ -110,6 +110,45 @@ src/
   index.css            # Global styles
 ```
 
+## Backend Setup
+
+The backend is an Express server that handles PDF ingestion and chat API endpoints.
+
+### Backend Environment Variables
+
+**Important**: Never commit `backend/.env` to Git. It contains sensitive credentials.
+
+1. **Copy the example file:**
+   ```bash
+   cd backend
+   cp .env.example .env
+   ```
+
+2. **Fill in your values in `backend/.env`:**
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   SUPABASE_STORAGE_BUCKET=raw-ingest
+   N8N_WEBHOOK_URL=https://optio-xrl.app.n8n.cloud/webhook/xrl/session/create
+   X_CALLBACK_SECRET=  # Optional
+   PORT=3001
+   FRONTEND_ORIGIN=http://localhost:5173
+   ENABLE_EMBEDDINGS=false
+   ```
+
+3. **For production (Render):**
+   - Set all environment variables in Render Dashboard → Environment tab
+   - Do NOT commit `backend/.env` to Git
+   - The `.env` file is already ignored by `.gitignore`
+
+### Backend Endpoints
+
+- `GET /` - Health check
+- `GET /health` - Health check JSON
+- `POST /api/chat` - Chat endpoint with document chunk retrieval
+- `POST /api/upload` - PDF upload endpoint (stores in Supabase Storage + chunks in Postgres)
+- `POST /api/documents/upload` - Alias for `/api/upload`
+
 ## Next Steps
 
 1. Define onboarding questions structure
