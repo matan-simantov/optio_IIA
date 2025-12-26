@@ -313,32 +313,25 @@ async function handlePdfUpload(req, res) {
 
     console.log("[POST /api/upload] Document record inserted")
 
-    // Step 3: Extract text from PDF
+    // Step 3: Extract text from PDF (optional - continue even if extraction fails)
     let extractedText = ""
-    try {
-      console.log("[POST /api/upload] Extracting text from PDF...")
-      extractedText = await extractTextFromPdf(req.file.buffer)
-      console.log("[POST /api/upload] Extracted text length:", extractedText.length)
-    } catch (extractError) {
-      console.error("[POST /api/upload] Text extraction error:", extractError)
-      // Update document status to failed
+    console.log("[POST /api/upload] Extracting text from PDF...")
+    extractedText = await extractTextFromPdf(req.file.buffer)
+    
+    if (extractedText.length === 0) {
+      console.log("[POST /api/upload] No text extracted from PDF (may be image-based or encrypted)")
+      // Update metadata to indicate no text was extracted
       await supabase
         .from("documents")
         .update({
-          status: "failed",
           metadata_json: {
             ...documentRecord.metadata_json,
-            error: extractError.message,
+            text_extraction: "failed_or_empty",
           },
         })
         .eq("doc_id", docId)
-
-      return res.status(500).json({
-        ok: false,
-        error: "extraction_error",
-        message: extractError.message,
-        doc_id: docId,
-      })
+    } else {
+      console.log("[POST /api/upload] Extracted text length:", extractedText.length)
     }
 
     // Step 4: Chunk the extracted text
