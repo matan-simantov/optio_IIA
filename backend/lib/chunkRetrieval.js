@@ -3,7 +3,7 @@
  * Retrieves relevant document chunks based on message keywords (MVP without embeddings)
  */
 
-import supabase from "./supabaseClient.js"
+import getSupabaseClient from "./supabaseClient.js"
 
 /**
  * Tokenize message into keywords (words with length >= 4, lowercase, unique)
@@ -81,6 +81,9 @@ export async function retrieveTopChunks({ docIds, message, topK = 12 }) {
   }
 
   try {
+    // Get Supabase client (lazy initialization)
+    const supabase = getSupabaseClient()
+    
     // Fetch all chunks for the given document IDs
     const { data: allChunks, error } = await supabase
       .from("document_chunks")

@@ -8,7 +8,7 @@ import express from "express"
 import cors from "cors"
 import multer from "multer"
 import { randomUUID } from "crypto"
-import supabase from "./lib/supabaseClient.js"
+import getSupabaseClient from "./lib/supabaseClient.js"
 import { extractTextFromPdf } from "./lib/pdfExtract.js"
 import { splitIntoChunks } from "./lib/chunking.js"
 import { retrieveTopChunks } from "./lib/chunkRetrieval.js"
@@ -265,6 +265,7 @@ async function handlePdfUpload(req, res) {
 
     // Step 1: Upload PDF to Supabase Storage
     console.log("[POST /api/upload] Uploading to Supabase Storage...")
+    const supabase = getSupabaseClient()
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(SUPABASE_STORAGE_BUCKET)
       .upload(storagePath, req.file.buffer, {
